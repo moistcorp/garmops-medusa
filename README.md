@@ -10,8 +10,10 @@ customer-facing `garmops` frontend remains a separate repository.
 - Redis 7 for sessions and Medusa runtime infrastructure
 - Docker Compose for local development and portable server deployment
 
-There is deliberately no storefront container and no Garmops business module
-or third-party integration in Stage 1.
+There is deliberately no storefront container. The Stage 2 backend includes a
+Garmops Medusa module, server-side pricing/catalog rules, design versions,
+production records, private R2 upload flow, PayU/Resend providers, and
+environment-driven authentication configuration.
 
 ## Requirements
 
@@ -126,9 +128,26 @@ The server uses `MEDUSA_WORKER_MODE=server`; the worker uses
 - `.env.example` — safe environment template
 - `docs/architecture.md` — long-term system boundary
 
+## Stage 2 status
+
+The backend migration is implemented in this repository. Run these checks after
+a fresh checkout or deployment:
+
+```bash
+npm run typecheck
+npm run test
+npm run build
+npm run catalog:bootstrap
+```
+
+The catalog bootstrap is idempotent and creates the 10 canonical active
+products. Production payment/order completion, malware-scanner deployment, and
+invoice PDF generation still require the corresponding external credentials or
+service wiring described in `docs/operations.md`.
+
 ## Scope boundary
 
 `garmops` is the separate frontend repository and must not be placed inside
-this backend repository. PayU, R2, Resend, Google OAuth, email OTP, customer or
-staff logic, Garmops commerce modules, GST invoices, and Supabase removal are
-future stages and are not implemented here.
+this backend repository. The frontend’s Supabase runtime is not used by this
+backend; Medusa, Neon, Redis, R2, PayU, Resend, and Medusa Auth are the backend
+boundary.

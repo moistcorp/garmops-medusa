@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "npm run dev --workspace @garmops/backend",
     "build": "npm run build --workspace @garmops/backend",
+    "typecheck": "npm run typecheck --workspace @garmops/backend",
     "start": "npm run start --workspace @garmops/backend",
     "lint": "npm run lint --workspace @garmops/backend",
     "test": "npm run test:unit --workspace @garmops/backend",
@@ -17,6 +18,7 @@
     "docker:logs": "docker compose logs -f",
     "db:migrate": "docker compose exec medusa npm run db:migrate --workspace @garmops/backend",
     "db:generate": "npm run db:generate --workspace @garmops/backend --",
+    "catalog:bootstrap": "npm run seed:garmops --workspace @garmops/backend",
     "redis:reset": "docker compose down -v",
     "admin:create": "npm run admin:create --workspace @garmops/backend --"
   },

@@ -1,4 +1,4 @@
-import { loadEnv, defineConfig } from '@medusajs/framework/utils'
+import { loadEnv, defineConfig, Modules, ContainerRegistrationKeys } from '@medusajs/framework/utils'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 
@@ -13,6 +13,10 @@ module.exports = defineConfig({
       storeCors: process.env.STORE_CORS!,
       adminCors: process.env.ADMIN_CORS!,
       authCors: process.env.AUTH_CORS!,
+      authMethodsPerActor: {
+        user: ['emailpass'],
+        customer: ['google'],
+      },
       jwtSecret: process.env.JWT_SECRET,
       cookieSecret: process.env.COOKIE_SECRET,
     },
@@ -34,6 +38,32 @@ module.exports = defineConfig({
     }),
   },
   modules: [
+    {
+      resolve: '@medusajs/medusa/auth',
+      dependencies: [Modules.CACHE, ContainerRegistrationKeys.LOGGER],
+      options: {
+        mfa: { encryption_key: process.env.AUTH_MFA_ENCRYPTION_KEY || process.env.JWT_SECRET || 'development-only-mfa-key' },
+        providers: [
+          { resolve: '@medusajs/medusa/auth-emailpass', id: 'emailpass' },
+          { resolve: '@medusajs/medusa/auth-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || 'not-configured', clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'not-configured', callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:9000/auth/customer/google/callback' } },
+        ],
+      },
+    },
+    {
+      resolve: '@medusajs/medusa/notification',
+      options: { providers: [{ resolve: './src/providers/resend', id: 'resend', options: { apiKey: process.env.RESEND_API_KEY, from: process.env.RESEND_FROM, channels: ['email'] } }] },
+    },
+    {
+      resolve: '@medusajs/medusa/payment',
+      options: {
+        providers: [
+          { resolve: './src/providers/payu', id: 'payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test' } },
+        ],
+      },
+    },
+    {
+      resolve: './src/modules/garmops',
+    },
     {
       resolve: '@medusajs/medusa/caching',
       options: {
