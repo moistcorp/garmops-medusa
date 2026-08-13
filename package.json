@@ -1,0 +1,42 @@
+{
+  "name": "garmops-medusa",
+  "private": true,
+  "packageManager": "npm@10.8.2",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace @garmops/backend",
+    "build": "npm run build --workspace @garmops/backend",
+    "start": "npm run start --workspace @garmops/backend",
+    "lint": "npm run lint --workspace @garmops/backend",
+    "test": "npm run test:unit --workspace @garmops/backend",
+    "backend:dev": "npm run dev --workspace @garmops/backend",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "db:migrate": "npm run db:migrate --workspace @garmops/backend",
+    "db:generate": "npm run db:generate --workspace @garmops/backend --",
+    "db:reset": "docker compose down -v",
+    "admin:create": "npm run admin:create --workspace @garmops/backend --"
+  },
+  "devDependencies": {
+    "@medusajs/eslint-plugin": "2.19.0",
+    "eslint": "^9.39.4",
+    "jiti": "^2.7.0",
+    "prettier": "^3.2.5",
+    "ajv": "^8.13.0"
+  },
+  "workspaces": [
+    "apps/**",
+    "!apps/backend/.medusa/**"
+  ],
+  "overrides": {
+    "eslint": {
+      "ajv": "^6.12.4"
+    },
+    "@eslint/eslintrc": {
+      "ajv": "^6.12.4"
+    }
+  }
+}

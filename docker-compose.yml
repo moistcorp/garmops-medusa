@@ -1,0 +1,130 @@
+name: garmops-medusa
+
+x-medusa-environment: &medusa-environment
+  NODE_ENV: ${NODE_ENV:-development}
+  PORT: ${PORT:-9000}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+  DATABASE_SSL: ${DATABASE_SSL:-false}
+  REDIS_URL: ${REDIS_URL:?REDIS_URL is required}
+  CACHE_REDIS_URL: ${CACHE_REDIS_URL:-${REDIS_URL}}
+  LOCKING_REDIS_URL: ${LOCKING_REDIS_URL:-${REDIS_URL}}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+  COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET is required}
+  STORE_CORS: ${STORE_CORS:-http://localhost:3000,http://localhost:9000}
+  ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9000}
+  AUTH_CORS: ${AUTH_CORS:-http://localhost:3000,http://localhost:9000}
+  MEDUSA_BACKEND_URL: ${MEDUSA_BACKEND_URL:-http://localhost:9000}
+
+x-medusa-depends-on: &medusa-depends-on
+  postgres:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-garmops_medusa}
+      POSTGRES_USER: ${POSTGRES_USER:-medusa}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [backend]
+
+  redis:
+    image: redis:7.4.5-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    networks: [backend]
+
+  medusa:
+    build:
+      context: .
+      target: development
+    restart: unless-stopped
+    environment:
+      <<: *medusa-environment
+      MEDUSA_WORKER_MODE: ${MEDUSA_WORKER_MODE:-shared}
+      DISABLE_MEDUSA_ADMIN: ${DISABLE_MEDUSA_ADMIN:-false}
+    command: ["/server/docker/start-dev.sh"]
+    depends_on: *medusa-depends-on
+    ports:
+      - "${PORT:-9000}:9000"
+    volumes:
+      - ./apps/backend/src:/server/apps/backend/src
+      - ./apps/backend/medusa-config.ts:/server/apps/backend/medusa-config.ts
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 9000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [backend]
+
+  medusa-server:
+    profiles: [production]
+    build:
+      context: .
+      target: production
+    restart: unless-stopped
+    environment:
+      <<: *medusa-environment
+      MEDUSA_WORKER_MODE: server
+      DISABLE_MEDUSA_ADMIN: "false"
+    command: ["/server/docker/start-production.sh"]
+    depends_on:
+      <<: *medusa-depends-on
+    ports:
+      - "${PORT:-9000}:9000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 9000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [backend]
+
+  medusa-worker:
+    profiles: [production]
+    build:
+      context: .
+      target: production
+    restart: unless-stopped
+    environment:
+      <<: *medusa-environment
+      MEDUSA_WORKER_MODE: worker
+      DISABLE_MEDUSA_ADMIN: "true"
+    command: ["npm", "start"]
+    depends_on:
+      medusa-server:
+        condition: service_healthy
+    networks: [backend]
+
+volumes:
+  postgres_data:
+    name: garmops_medusa_postgres_data
+  redis_data:
+    name: garmops_medusa_redis_data
+
+networks:
+  backend:
+    name: garmops_medusa_backend
