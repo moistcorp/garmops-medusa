@@ -5,10 +5,6 @@ loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 module.exports = defineConfig({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
-    databaseDriverOptions: {
-      ssl: process.env.DATABASE_SSL === 'true',
-      sslmode: process.env.DATABASE_SSL === 'true' ? 'require' : 'disable',
-    },
     redisUrl: process.env.REDIS_URL,
     workerMode:
       (process.env.MEDUSA_WORKER_MODE as 'shared' | 'server' | 'worker') ||

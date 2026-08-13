@@ -15,9 +15,9 @@
     "docker:up": "docker compose up --build -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "db:migrate": "npm run db:migrate --workspace @garmops/backend",
+    "db:migrate": "docker compose exec medusa npm run db:migrate --workspace @garmops/backend",
     "db:generate": "npm run db:generate --workspace @garmops/backend --",
-    "db:reset": "docker compose down -v",
+    "redis:reset": "docker compose down -v",
     "admin:create": "npm run admin:create --workspace @garmops/backend --"
   },
   "devDependencies": {

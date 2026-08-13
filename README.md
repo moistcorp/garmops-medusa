@@ -6,7 +6,7 @@ customer-facing `garmops` frontend remains a separate repository.
 ## Architecture
 
 - Medusa v2.19.0 backend and bundled Medusa Admin
-- PostgreSQL 16 for authoritative relational data
+- Neon PostgreSQL for authoritative relational data
 - Redis 7 for sessions and Medusa runtime infrastructure
 - Docker Compose for local development and portable server deployment
 
@@ -18,14 +18,15 @@ or third-party integration in Stage 1.
 - Docker Desktop (running)
 - Git
 
-PostgreSQL and Redis are provided by Docker; they do not need to be installed
-on the host.
+Neon provides PostgreSQL, and Redis is provided by Docker. Developers do not
+need to install PostgreSQL or Redis on the host.
 
 ## First-time startup
 
 ```bash
 cp .env.example .env
-# Replace the three replace-with-* values in .env with random local values.
+# Set DATABASE_URL to the Neon pooled PostgreSQL URL supplied by your project.
+# Replace the JWT_SECRET and COOKIE_SECRET placeholders with random values.
 npm install
 docker compose up --build -d
 ```
@@ -36,7 +37,7 @@ ignored by Git and is already suitable for this checkout.
 ## Normal startup and operations
 
 ```bash
-# Start PostgreSQL, Redis, and the Medusa development server.
+# Start Redis and the Medusa development server connected to Neon.
 npm run docker:up
 
 # Stop containers without deleting database or Redis volumes.
@@ -49,8 +50,8 @@ npm run docker:logs
 curl -i http://localhost:9000/health
 ```
 
-PostgreSQL and Redis are bound to localhost only for optional debugging. They
-are not publicly exposed by this Compose setup.
+Only Redis is bound to localhost for optional debugging. Neon PostgreSQL is
+accessed through DATABASE_URL and is not exposed by this Compose setup.
 
 ## Medusa Admin and admin user
 
@@ -79,14 +80,20 @@ npm run db:migrate
 npm run db:generate -- <module-name>
 ```
 
-Normal restarts and `docker compose down` preserve the database. The following
-command is intentionally destructive: it removes the local PostgreSQL and
-Redis Docker volumes and all data in them.
+The migration command runs against the Neon database in DATABASE_URL. Do not
+manually create Medusa tables. Normal restarts and `docker compose down` do not
+affect Neon data.
+
+The following command is intentionally destructive only to local Redis state;
+it does not reset or delete the authoritative Neon database:
 
 ```bash
-npm run db:reset
+npm run redis:reset
 docker compose up --build -d
 ```
+
+Any Neon database reset must be performed intentionally and separately through
+the Neon project tooling. It is not automated by this repository.
 
 ## Production build and server/worker modes
 
@@ -102,7 +109,7 @@ The same source tree and production image support both instances:
 
 ```bash
 # Build and run the server (Admin enabled) and worker (Admin disabled).
-docker compose --profile production up --build -d postgres redis medusa-server medusa-worker
+docker compose --profile production up --build -d redis medusa-server medusa-worker
 
 # Stop the production-profile services without deleting volumes.
 docker compose --profile production down
@@ -114,7 +121,7 @@ The server uses `MEDUSA_WORKER_MODE=server`; the worker uses
 ## Useful files
 
 - `apps/backend/medusa-config.ts` — environment-driven Medusa configuration
-- `docker-compose.yml` — PostgreSQL, Redis, development server, and production server/worker services
+- `docker-compose.yml` — Redis, development server, and production server/worker services
 - `Dockerfile` — multi-stage, ARM64/AMD64-portable image build
 - `.env.example` — safe environment template
 - `docs/architecture.md` — long-term system boundary
