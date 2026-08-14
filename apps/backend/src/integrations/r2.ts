@@ -4,7 +4,7 @@ import { MedusaError } from "@medusajs/framework/utils"
 import { testGetObject, testHeadObject, testPutObject } from "./test-doubles"
 import { injectTestFailure } from "./test-failures"
 
-const useTestDouble = () => process.env.GARMOPS_TEST_DOUBLES === "true"
+const useTestDouble = () => process.env.NODE_ENV !== "production" && process.env.GARMOPS_TEST_DOUBLES === "true"
 
 function client(): S3Client {
   const account = process.env.R2_ACCOUNT_ID

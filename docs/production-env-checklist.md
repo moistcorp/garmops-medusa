@@ -67,6 +67,11 @@ Test-only variables must not be enabled in production:
 - `EXPOSE_TEST_OTP`
 - `GARMOPS_TEST_DOUBLES`
 - `GARMOPS_TEST_MALWARE_RESULT`
+- `GARMOPS_TEST_FAILURE`
+
+`GARMOPS_TEST_FAILURE` is only for isolated test doubles and must never be set
+in a deployed environment. Accepted local points are `r2-upload`, `r2-verify`,
+`r2-download`, `r2-put`, `r2-read`, `resend`, and `invoice`.
 
 ## Launch wiring still required
 
@@ -77,3 +82,9 @@ Test-only variables must not be enabled in production:
 - Configure R2 bucket policy, CORS, and private signed-object behavior.
 - Configure backend/frontend DNS, TLS, reverse proxy, and approved CORS origins.
 - Confirm secret rotation, backups, monitoring, and rollback access.
+
+## Stage 4.2 verification state
+
+The local environment contract is documented and the rebuilt production image
+booted successfully. External production values and provider registrations
+remain manual launch gates; no live PayU or real notification was used.

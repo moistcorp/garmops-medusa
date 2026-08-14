@@ -10,4 +10,10 @@ describe("test failure controls", () => {
     expect(() => injectTestFailure("r2-put", env)).toThrow("Injected test failure: r2-put")
     expect(() => injectTestFailure("resend", env)).not.toThrow()
   })
+
+  it("cannot inject failures in production even when test flags are present", () => {
+    const env = { NODE_ENV: "production", GARMOPS_TEST_DOUBLES: "true", GARMOPS_TEST_FAILURE: "all" }
+    expect(() => injectTestFailure("r2-put", env)).not.toThrow()
+    expect(() => injectTestFailure("resend", env)).not.toThrow()
+  })
 })

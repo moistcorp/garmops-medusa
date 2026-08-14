@@ -90,7 +90,10 @@ customer_args=(--project=chromium --grep-invert "Founder|Operations")
 if [ -n "${E2E_CUSTOMER_GREP:-}" ]; then
   customer_args+=(--grep "$E2E_CUSTOMER_GREP")
 fi
-if [ "${E2E_SKIP_CUSTOMER:-false}" != "true" ]; then
+if [ "${E2E_UPDATE_SNAPSHOTS:-false}" = "true" ]; then
+  customer_args+=(--update-snapshots)
+fi
+if [ "${E2E_ONLY_STAFF:-false}" != "true" ] && [ "${E2E_SKIP_CUSTOMER:-false}" != "true" ]; then
   NEXT_PUBLIC_MEDUSA_BACKEND_URL="http://127.0.0.1:$backend_port" \
   NEXT_PUBLIC_ACCOUNTS_ENABLED=true \
   STAFF_PORTAL_ENABLED=true \

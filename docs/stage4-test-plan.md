@@ -140,6 +140,38 @@ explicitly resolved with regression evidence. External manual wiring and the
 explicitly authorized live-payment smoke test remain launch gates even when
 local code verification passes.
 
+## Stage 4.2 final execution record — 2026-08-14
+
+This section supersedes stale interim counts above. The final result is
+**NOT COMPLETE** because multiple P0/P1 scenarios remain explicitly BLOCKED or
+failed in the browser harness.
+
+```text
+frontend: typecheck PASS; lint PASS; 40 files / 154 tests PASS; production build PASS
+backend: typecheck PASS; lint PASS; 9 suites / 28 unit tests PASS; build PASS
+HTTP: 1 suite / 9 tests PASS in isolated PostgreSQL + Redis/test-double run
+Docker: fresh server and worker production images PASS; server /health PASS;
+        Redis and ClamAV healthy; worker started
+dependency audit: frontend 0/0/0; backend 0 Critical / 68 High / 6 Moderate;
+                  all High nodes classified in docs/dependency-security.md
+```
+
+Browser evidence: authenticated customer critical matrix 6/6 PASS across
+Chromium, WebKit, and Firefox; Founder/Operations staff-only matrix 2/2 PASS
+in Chromium; broad Chromium customer suite 12 PASS, 4 visual/harness failures,
+1 interrupted, and 4 not run. The failures were isolated product-view visual
+assertions and Next overlay click interception, not payment/order assertions.
+
+Failure injection is guarded by `GARMOPS_TEST_DOUBLES=true` and exposes the
+seven documented points, but only the guard/unit contract and invoice recovery
+path were exercised in this run. Direct R2, Resend, scanner, restart, Neon,
+malformed-request, IDOR, rate-limit, CORS, and cookie matrices remain BLOCKED
+and are not counted as passes.
+
+The run fixed and regression-tested the frontend Tailwind build failure,
+null-owner customer file access, raw refund failure disclosure, and invoice /
+accounting total reconciliation.
+
 ## Stage 4.1 execution record — 2026-08-14
 
 The following commands were executed against the frontend checkout at
@@ -183,3 +215,28 @@ or HTTP recovery scenarios.
 The test OTP mechanism is fail-closed for production: both test flags and a
 non-production environment are required, and the frontend only reads the
 returned test code when `GARMOPS_E2E=true`.
+
+## Stage 4.3 execution record — 2026-08-14
+
+The final isolated verification run completed these gates:
+
+- Frontend typecheck, lint, 154 tests, and production build: PASS.
+- Backend typecheck, lint, 29 unit tests, and production build: PASS.
+- Stage 2 HTTP integration: 9/9 PASS.
+- Customer browser critical and garment visual suite: 21/21 Chromium PASS.
+- Founder and Operations browser access: 2/2 Chromium PASS.
+- Customer authenticated browser matrix: 6/6 PASS across Chromium, Firefox,
+  and WebKit.
+- Redis persistence across restart: PASS.
+- ClamAV TCP `PING` and `INSTREAM` clean scan: PASS.
+
+The browser harness now supports `E2E_UPDATE_SNAPSHOTS=true`, skips customer
+execution for `E2E_ONLY_STAFF=true`, rejects analytics consent deterministically,
+and waits for an explicit photographic canvas render-ready state. These are
+test isolation controls; they do not enable live services or PayU.
+
+The following remain intentionally unclaimed because they require production
+access or broader dedicated fixtures: Neon failover/restart, production
+server/worker boot, external R2/Resend/ClamAV interruption recovery, malformed
+and abuse-rate matrices, full CORS/cookie review against production origins,
+dependency remediation, and live PayU verification.

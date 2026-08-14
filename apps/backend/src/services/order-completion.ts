@@ -55,12 +55,11 @@ async function ensureInvoice(container: Container, input: { order: Awaited<Retur
   const buyerState = String(billing.province ?? billing.state ?? "") || null
   const items = input.order.items ?? []
   const lines: InvoiceData["lines"] = items.map((item) => ({ description: item.product_title || item.title, hsn: String(item.metadata?.hsn ?? "6109"), quantity: item.quantity, unitPaise: item.unit_price, discountPaise: Number(item.discount_total ?? 0), taxablePaise: Number(item.subtotal ?? item.unit_price * item.quantity) }))
-  const snapshotTotals = input.snapshots.reduce((sum, snapshot) => sum + Number((snapshot.pricing_snapshot as Record<string, unknown>)?.totalPaise ?? 0), 0)
   const totalPaise = asPaise(input.order.total)
   const computed = lines.reduce((sum, line) => sum + line.taxablePaise, 0)
   const gst = calculateGstBreakdown({ taxablePaise: computed, sellerState, buyerState })
   const accountingTotal = computed + gst.taxPaise
-  if (accountingTotal !== totalPaise && snapshotTotals !== totalPaise) throw new MedusaError(MedusaError.Types.CONFLICT, `Invoice total ${accountingTotal} does not reconcile to paid order total ${totalPaise}`)
+  if (accountingTotal !== totalPaise) throw new MedusaError(MedusaError.Types.CONFLICT, `Invoice total ${accountingTotal} does not reconcile to paid order total ${totalPaise}`)
   const data: InvoiceData = { invoiceNumber, invoiceDate: new Date().toISOString().slice(0, 10), orderNumber: input.orderNumber, seller: { name: process.env.INVOICE_SELLER_NAME || "Garmops", gstin: process.env.INVOICE_SELLER_GSTIN || "", address: process.env.INVOICE_SELLER_ADDRESS || "", state: sellerState, pin: process.env.INVOICE_SELLER_PIN }, buyer: { name: String(billing.first_name || input.order.email || "Customer") + (billing.last_name ? ` ${billing.last_name}` : ""), company: billing.company, gstin: billing.metadata?.gstin as string | undefined, address: [billing.address_1, billing.address_2, billing.city, billing.postal_code].filter(Boolean).join(", "), state: buyerState ?? undefined, pin: billing.postal_code }, shipping: input.order.shipping_address ? { address: [input.order.shipping_address.address_1, input.order.shipping_address.city, input.order.shipping_address.postal_code].filter(Boolean).join(", "), state: String(input.order.shipping_address.province ?? "") } : undefined, lines, payment: { provider: "PayU", reference: input.paymentId || input.providerTransactionId, status: "paid" } }
   const sellerSnapshot = data.seller
   const billingSnapshot = data.buyer

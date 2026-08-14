@@ -100,3 +100,35 @@ PostgreSQL volume. It uses separate local ports and test-only credentials;
 keep the production Compose project and its volumes untouched. Failure points
 can be exercised with `GARMOPS_TEST_FAILURE` while
 `GARMOPS_TEST_DOUBLES=true`; never enable those flags in production.
+
+## Stage 4.2 evidence commands
+
+```bash
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run test:stage2
+docker compose --profile production build medusa-server medusa-worker
+docker compose --profile production up -d medusa-server medusa-worker
+curl -fsS http://127.0.0.1:9000/health
+```
+
+The latest local run passed the backend/frontend gates, isolated HTTP suite,
+production image build, server health, Redis, and ClamAV checks. Browser visual
+failures and the dependency interruption matrix remain explicit Stage 4.2
+blockers and must not be converted to PASS by this runbook.
+
+## Stage 4.3 local closure evidence — 2026-08-14
+
+The current code-level verification is green: frontend 154 tests and backend
+29 unit tests pass, the Stage 2 HTTP suite is 9/9, customer Chromium is 21/21,
+staff Chromium is 2/2, and the customer Chromium/Firefox/WebKit matrix is 6/6.
+An isolated Redis container retained a sentinel across restart, and an
+isolated ClamAV container answered TCP `PING` and returned `stream: OK` for a
+synthetic clean payload. Those temporary runtime resources were removed.
+
+This evidence does not authorize production startup, live PayU, or use of
+production credentials. Before traffic is enabled, complete the environment,
+dependency, external-provider, monitoring, backup, rollback, and production
+server/worker checks in this runbook and obtain explicit live-payment approval.

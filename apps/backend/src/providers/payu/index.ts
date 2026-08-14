@@ -47,7 +47,7 @@ export class PayuPaymentProvider implements IPaymentProvider {
   async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
     const txnid = String(input.data?.mihpayid ?? input.data?.txnid ?? "")
     if (!txnid) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU refund is missing transaction identity")
-    if (process.env.GARMOPS_TEST_DOUBLES === "true") {
+    if (process.env.NODE_ENV !== "production" && process.env.GARMOPS_TEST_DOUBLES === "true") {
       testState().paymentCommands.push({ command: "cancel_refund_transaction", txnid, amount: input.amount })
       return { data: { amount: formatPaiseAsRupees(input.amount), status: "refund_requested", provider_response: { status: "1", test: true } } }
     }

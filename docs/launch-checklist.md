@@ -61,14 +61,13 @@ authorized.
 - [ ] Payment reconciliation and artifact retry procedure documented
 - [ ] Incident contacts and customer-support communication path confirmed
 
-### Stage 4.1 current gate status
+### Stage 4.2 current gate status
 
-**OPEN / DO NOT LAUNCH.** Customer authentication passed in Chromium, WebKit,
-and Firefox; Founder/Operations browser access passed; and the configured-cart,
-multi-product, and same-product authenticated Chromium cases passed in isolated
-runs. Backend dependency findings (68 High, 6 Moderate), broader failure and
-abuse matrices, external wiring, and the live-payment authorization gate remain
-open.
+**OPEN / DO NOT LAUNCH.** Backend/frontend automated gates and rebuilt local
+production images pass. The dependency findings are classified and absent from
+the runtime image, but direct P0/P1 failure, abuse, CORS/cookie, IDOR, and
+browser visual/recovery matrices remain incomplete. External wiring and explicit
+live-payment authorization also remain open.
 
 ## Release hygiene
 
@@ -78,3 +77,12 @@ open.
 - [ ] No real customer data used
 - [ ] No real transactional email sent
 - [ ] No live PayU charge made without explicit authorization
+
+### Stage 4.3 closure status — 2026-08-14
+
+Code and isolated runtime gates are green: frontend/backend static, unit,
+build, HTTP, customer/staff browser, cross-browser authentication, Redis
+restart, and ClamAV stream checks all passed. Launch remains blocked by
+production-only wiring and authorization gates, including dependency findings,
+Neon/worker deployment verification, external provider configuration,
+monitoring/backups/rollback, and explicit live PayU approval.

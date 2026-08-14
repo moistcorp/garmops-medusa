@@ -12,7 +12,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   try {
     const refund = await requestPayuRefund(req.scope, { paymentId: req.params.id, amountPaise: body.amountPaise, idempotencyKey: body.idempotencyKey, actorId: req.auth_context?.actor_id ?? "" })
     res.status(201).json({ refund, requestId: req.requestId })
-  } catch (error) {
-    res.status(409).json({ code: "REFUND_FAILED", message: error instanceof Error ? error.message : "Refund failed", requestId: req.requestId })
+  } catch {
+    res.status(409).json({ code: "REFUND_FAILED", message: "Refund could not be submitted", requestId: req.requestId })
   }
 }

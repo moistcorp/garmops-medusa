@@ -7,7 +7,7 @@ export class ResendNotificationProvider implements INotificationProvider {
   static identifier = "resend"
   constructor(private readonly options: { apiKey?: string; from?: string } = {}) {}
   async send(notification: ProviderSendNotificationDTO): Promise<ProviderSendNotificationResultsDTO> {
-    if (process.env.GARMOPS_TEST_DOUBLES === "true") {
+    if (process.env.NODE_ENV !== "production" && process.env.GARMOPS_TEST_DOUBLES === "true") {
       injectTestFailure("resend")
       testState().notifications.push({ ...notification as unknown as Record<string, unknown>, sentAt: new Date().toISOString() })
       return { id: `test-notification-${testState().notifications.length}` }

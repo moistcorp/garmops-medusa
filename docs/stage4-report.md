@@ -1,5 +1,167 @@
 # Garmops Stage 4 Report
 
+> **Stage 4.2 authoritative closure record — 2026-08-14**
+>
+> The historical Stage 4/4.1 record follows this section. Where counts or
+> statuses differ, this Stage 4.2 record is authoritative.
+
+## A. Stage 4.2 Status
+
+```text
+STAGE 4.2 NOT COMPLETE
+```
+
+Local code and runtime gates are green, but unresolved P0/P1 verification
+scenarios remain explicitly BLOCKED, and the broad browser harness recorded
+visual/harness failures. No live PayU, real customer data, or real email was
+used.
+
+## B. Executive Summary
+
+| Area | Result | Evidence |
+|---|---|---|
+| Frontend build/typecheck/lint/tests | PASS | 40 files / 154 tests; clean production build |
+| Backend build/typecheck/lint/unit | PASS | 9 suites / 28 tests |
+| HTTP checkout/integrity | PASS | Isolated Stage 2 suite: 9/9 |
+| Production runtime | PASS | Fresh server/worker images; `/health` 200; Redis and ClamAV healthy |
+| Browser critical auth | PASS | Customer 6/6 cross-browser; staff 2/2 Chromium |
+| Browser broad visual suite | PARTIAL | 12 pass, 4 fail, 1 interrupted, 4 not run |
+| Failure/recovery and abuse matrices | BLOCKED | Direct dependency interruption and full malformed/IDOR/rate-limit/CORS/cookie runs remain |
+| Dependency security | CLASSIFIED, NOT CLEARED | 0 Critical / 68 High / 6 Moderate backend; High group classified as non-runtime in production image |
+
+## C. Test Counts
+
+```text
+frontend: 40 test files, 154 passed, 0 failed
+backend unit: 9 suites, 28 passed, 0 failed
+backend HTTP: 1 suite, 9 passed, 0 failed
+browser: customer critical 6/6 cross-browser; staff 2/2; broad Chromium 12 pass,
+         4 visual/harness failures, 1 interrupted, 4 not run
+```
+
+## D. P0 / P1 Findings
+
+Closed in this run: clean frontend Tailwind safe-area build failure; null-owner
+customer file finalize/download access; raw refund failure disclosure; and
+invoice/accounting total reconciliation.
+
+Remaining P0/P1 items are verification blockers, not silently accepted defects:
+direct PayU failure/cancel/tamper matrix, R2/Resend/scanner/restart recovery,
+full customer IDOR and Foundry mutation matrix, bounded abuse/rate-limit and
+CORS/cookie checks, and the broad browser visual/harness failures.
+
+## E. Customer E2E Matrix
+
+OTP/account/logout and customer-to-Foundry denial passed across Chromium,
+WebKit, and Firefox. Configured cart, sample checkout, MOQ, independent line
+identity, order history, invoice, and PayU test success passed at HTTP level.
+Artwork browser flow, two-customer browser IDOR, logout/cache isolation, and
+the full visual product suite remain incomplete.
+
+## F. PayU Matrix
+
+```text
+test-double success: PASS
+concurrent callback/webhook idempotency: PASS
+refund permission boundary: PASS in Stage 2
+failure/cancel/double-click/refresh/browser-close/signature/amount tamper: BLOCKED
+live PayU and real charge: NOT RUN / not authorized
+```
+
+## G. Foundry Matrix
+
+Founder and Operations access passed in the targeted browser run. Operations
+refund denial and customer boundary passed in HTTP coverage. Full UI order,
+artwork approval, frozen-config mutation, and concurrent transition matrices
+remain incomplete.
+
+## H. Failure-Recovery Matrix
+
+The guarded points are `r2-upload`, `r2-verify`, `r2-download`, `r2-put`,
+`r2-read`, `resend`, and `invoice`. Guard/unit contracts and invoice recovery
+were exercised. Direct R2/Resend/scanner interruption, Medusa/worker/Redis
+restart, and Neon interruption were BLOCKED; no unsafe external interruption was
+attempted.
+
+## I. Security Summary
+
+Headers, OTP production guard, ownership checks covered by Stage 2, staff
+permission boundaries, MOQ/pricing checks, payment hash/amount/session checks,
+and secret-name scans passed on exercised paths. Full IDOR, raw-error,
+rate-limit, CORS, cookie, and malformed-request matrices remain BLOCKED.
+
+## J. Dependency Security
+
+Frontend runtime audit: 0 Critical / 0 High / 0 Moderate. Backend runtime-shaped
+audit: 0 Critical / 68 High / 6 Moderate. The High nodes are one lodash advisory
+group propagated through Medusa 2.19 and GraphQL-codegen. The rebuilt production
+image contains neither lodash nor GraphQL-codegen, so the group is classified
+`NOT RUNTIME REACHABLE IN PRODUCTION IMAGE`; it remains tracked for a compatible
+upstream upgrade. See [dependency-security.md](dependency-security.md).
+
+## K. Performance / Browser
+
+Chromium, WebKit, and Firefox critical auth passed. Safari/Edge/mobile,
+large-cart, upload performance, network chatter, multi-tab, and full browser
+visual acceptance remain incomplete. Four broad Chromium failures were visual
+assertion/Next overlay harness issues.
+
+## L. Runtime Verification
+
+```text
+frontend production build: PASS
+backend production build: PASS
+fresh server image: PASS; healthy; /health = 200
+fresh worker image: PASS; started with Redis/workflow connections
+Redis: PASS / healthy
+ClamAV: PASS / healthy
+Admin and external production wiring: manual gate remains
+```
+
+## M. Data Integrity
+
+Configured/sample completion, one order/invoice/job, concurrent callback
+idempotency, immutable snapshot contracts, and invoice artifacts passed in the
+isolated HTTP suite. Dedicated post-failure orphan audit, concurrent production
+transition test, and full refund cross-record matrix remain incomplete.
+
+## N. Remaining Manual Production Wiring
+
+Neon/Redis/R2/ClamAV/PayU/Resend/Google production values, callback and OAuth
+registrations, R2 policy/CORS, DNS/TLS/reverse proxy, monitoring/backups/
+rollback, and explicit authorization for a single live-payment smoke remain.
+
+## O. Files Added or Updated
+
+Backend source: `apps/backend/src/api/foundry/payments/[id]/refund/route.ts`,
+`apps/backend/src/api/store/garmops/files/[id]/download/route.ts`,
+`apps/backend/src/api/store/garmops/files/[id]/finalize/route.ts`, and
+`apps/backend/src/services/order-completion.ts`.
+
+Frontend source: `/Users/rahul/garmops/src/app/globals.css` and
+`/Users/rahul/garmops/src/components/common/Navbar.tsx`.
+
+Evidence docs: `dependency-security.md`, `stage4-test-plan.md`,
+`production-env-checklist.md`, `launch-checklist.md`, and
+`deployment-runbook.md`.
+
+## P. Git Status
+
+```text
+No commit performed. No push performed. No real customer data or email used.
+Frontend and backend changes remain local working-tree diffs only.
+```
+
+## Q. Launch Recommendation
+
+```text
+DO NOT LAUNCH.
+```
+
+Close the explicitly blocked P0/P1 matrices, repair or quarantine the browser
+visual harness failures, complete external wiring, and obtain live-payment
+authorization before real traffic.
+
 Date: 2026-08-14
 
 ## A. Stage 4 Status
@@ -329,3 +491,35 @@ remain open.
 
 No commit or push was performed, no live PayU charge was made, and no real
 customer, payment, or transactional-email data was used.
+
+## Stage 4.3 final closure record — 2026-08-14
+
+Stage 4.3 code and isolated-runtime gates are **PASS**. The overall launch
+recommendation remains **DO NOT LAUNCH** until the explicitly external and
+production-only gates below are completed.
+
+```text
+frontend: typecheck PASS; lint PASS; 40 files / 154 tests PASS; production build PASS
+backend: typecheck PASS; lint PASS; 9 suites / 29 unit tests PASS; production build PASS
+HTTP: 9/9 Stage 2 integration tests PASS on isolated PostgreSQL + Redis
+browser: customer Chromium 21/21 PASS; staff Chromium 2/2 PASS;
+         customer auth matrix Chromium/Firefox/WebKit 6/6 PASS
+runtime: isolated Redis sentinel survived restart; ClamAV TCP PING and
+         INSTREAM clean scan PASS; temporary containers/volumes removed
+```
+
+This run closed the browser harness contamination and authenticated-CTA race:
+visual fixtures reject analytics consent, Next runs in development mode with
+diagnostics disabled for the harness, photographic canvas tests wait for an
+explicit render-ready marker, and the configurator refreshes a still-loading
+customer session before opening an authentication dialog. Test doubles,
+failure injection, R2, Resend, PayU refund doubles, and malware overrides now
+require a non-production environment; the production guard has a regression
+unit test.
+
+Remaining launch gates are unchanged: backend dependency findings, Neon and
+production deployment/restart verification, production R2/Resend/ClamAV
+wiring, CORS/cookie and abuse matrices against the production-shaped server,
+monitoring/backups/rollback setup, and explicit authorization for any live
+PayU smoke test. No live PayU charge, production deployment, commit, or push
+was performed.

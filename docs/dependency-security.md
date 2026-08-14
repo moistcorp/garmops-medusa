@@ -43,3 +43,23 @@ packages. Moderate findings group under RushStack tooling plus ajv and the
 bullmq/uuid chain. No force-fix or lockfile override was applied. Findings
 with an npm-provided fix still require a coordinated, compatible Medusa-family
 upgrade and regression run; they are not treated as cleared by this audit.
+
+## Stage 4.2 classification — 2026-08-14
+
+The 68 High nodes collapse to one High advisory group plus its dependency
+propagation:
+
+| Advisory group | Affected lockfile path | Severity | Classification | Disposition |
+|---|---|---:|---|---|
+| `GHSA-r5fr-rjxr-66jc` — lodash Code Injection via `_.template` imports | `@medusajs/cli@2.19.0` → `@medusajs/utils@2.19.0` → `@graphql-codegen/core@4.0.2` / `@graphql-codegen/typescript@4.1.6` → `@graphql-codegen/plugin-helpers@5.1.1` → `lodash@4.17.23`; npm propagates it through the Medusa 2.19 module family | High | `NOT RUNTIME REACHABLE IN PRODUCTION IMAGE` / upstream-compatible-fix required | The rebuilt production image contains neither `/server/node_modules/lodash` nor `/server/node_modules/@graphql-codegen/plugin-helpers`. The affected plugin-helper source uses `lodash/merge`, and no `_.template` call was found in the affected package sources. No force override was applied. Track for the next compatible Medusa release and repeat audit/image reachability checks. |
+
+There are no Critical findings. The six Moderate findings are separately
+tracked under lodash prototype-pollution, `ajv`, `bullmq`/`uuid`, and
+RushStack/tooling chains. The audit still exits non-zero because npm counts the
+build/CLI graph; it is classified, not silently cleared.
+
+```text
+backend: npm audit --omit=dev -> 0 Critical / 68 High / 6 Moderate
+frontend: npm audit --omit=dev -> 0 Critical / 0 High / 0 Moderate
+production image: lodash absent; @graphql-codegen/plugin-helpers absent
+```
