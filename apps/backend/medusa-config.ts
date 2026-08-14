@@ -1,4 +1,5 @@
 import { loadEnv, defineConfig, Modules, ContainerRegistrationKeys } from '@medusajs/framework/utils'
+import { GARMOPS_MODULE } from './src/modules/garmops'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 
@@ -15,7 +16,7 @@ module.exports = defineConfig({
       authCors: process.env.AUTH_CORS!,
       authMethodsPerActor: {
         user: ['emailpass'],
-        customer: ['google'],
+        customer: ['emailotp', 'google'],
       },
       jwtSecret: process.env.JWT_SECRET,
       cookieSecret: process.env.COOKIE_SECRET,
@@ -40,11 +41,12 @@ module.exports = defineConfig({
   modules: [
     {
       resolve: '@medusajs/medusa/auth',
-      dependencies: [Modules.CACHE, ContainerRegistrationKeys.LOGGER],
+      dependencies: [Modules.CACHE, Modules.CUSTOMER, GARMOPS_MODULE, ContainerRegistrationKeys.LOGGER],
       options: {
         mfa: { encryption_key: process.env.AUTH_MFA_ENCRYPTION_KEY || process.env.JWT_SECRET || 'development-only-mfa-key' },
         providers: [
           { resolve: '@medusajs/medusa/auth-emailpass', id: 'emailpass' },
+          { resolve: './src/providers/email-otp', id: 'emailotp' },
           { resolve: '@medusajs/medusa/auth-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || 'not-configured', clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'not-configured', callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:9000/auth/customer/google/callback' } },
         ],
       },
@@ -57,7 +59,7 @@ module.exports = defineConfig({
       resolve: '@medusajs/medusa/payment',
       options: {
         providers: [
-          { resolve: './src/providers/payu', id: 'payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test' } },
+          { resolve: './src/providers/payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test' } },
         ],
       },
     },

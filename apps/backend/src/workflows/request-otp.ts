@@ -3,7 +3,7 @@ import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 
 type Input = { email: string; requestId?: string }
-const requestOtpStep = createStep("garmops-request-otp", async (input: Input, { container }) => {
+const requestOtpStep = createStep("request-otp", async (input: Input, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
   const result = await service.createOtp(input.email, input.requestId)
   return new StepResponse(result, result.challenge.id)
@@ -13,4 +13,4 @@ const requestOtpStep = createStep("garmops-request-otp", async (input: Input, { 
   await service.deleteOtpChallenges(challengeId)
 })
 
-export const requestOtpWorkflow = createWorkflow("garmops-request-otp", (input: Input) => new WorkflowResponse(requestOtpStep(input)))
+export const requestOtpWorkflow = createWorkflow("request-otp", (input: Input) => new WorkflowResponse(requestOtpStep(input)))

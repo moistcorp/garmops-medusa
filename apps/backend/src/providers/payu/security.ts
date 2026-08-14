@@ -1,7 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto"
+import { MedusaError } from "@medusajs/framework/utils"
 
 export function formatPaiseAsRupees(paise: number): string {
-  if (!Number.isSafeInteger(paise) || paise <= 0) throw new Error("Invalid paise amount")
+  if (!Number.isSafeInteger(paise) || paise <= 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Invalid paise amount")
   return `${Math.floor(paise / 100)}.${String(paise % 100).padStart(2, "0")}`
 }
 export function parseRupeesToPaise(value: unknown): number | null {

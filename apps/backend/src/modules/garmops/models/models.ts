@@ -21,7 +21,7 @@ export const OrderConfigurationSnapshot = model.define("order_configuration_snap
 })
 
 export const StoredFile = model.define("stored_file", {
-  id: model.id().primaryKey(), object_key: model.text().unique(), bucket: model.text(), purpose: model.text(), kind: model.text(), visibility: model.enum(["public", "private"] as const), original_filename: model.text(), safe_filename: model.text(), content_type: model.text(), extension: model.text(), byte_size: model.bigNumber(), sha256: model.text().nullable(), uploaded_by: model.text().nullable(), customer_id: model.text().nullable(), project_id: model.text().nullable(), order_id: model.text().nullable(), replacement_for_file_id: model.text().nullable(), scan_status: model.enum(["pending", "clean", "infected", "quarantined", "failed"] as const).default("pending"), state: model.enum(["pending", "uploaded", "finalized", "rejected"] as const).default("pending"), finalized_at: model.dateTime().nullable(), metadata: model.json().nullable(),
+  id: model.id().primaryKey(), object_key: model.text().unique(), bucket: model.text(), purpose: model.text(), kind: model.text(), visibility: model.enum(["public", "private"] as const), original_filename: model.text(), safe_filename: model.text(), content_type: model.text(), extension: model.text(), byte_size: model.bigNumber(), sha256: model.text().nullable(), uploaded_by: model.text().nullable(), customer_id: model.text().nullable(), project_id: model.text().nullable(), order_id: model.text().nullable(), replacement_for_file_id: model.text().nullable(), scan_status: model.enum(["pending", "clean", "infected", "quarantined", "failed"] as const).default("pending"), state: model.enum(["pending", "uploaded", "finalized", "rejected"] as const).default("pending"), scan_attempts: model.number().default(0), scan_started_at: model.dateTime().nullable(), scan_completed_at: model.dateTime().nullable(), scan_error: model.text().nullable(), finalized_at: model.dateTime().nullable(), metadata: model.json().nullable(),
 })
 
 export const ProductionJob = model.define("production_job", {
@@ -37,11 +37,23 @@ export const StaffMember = model.define("staff_member", {
 })
 
 export const PaymentEvent = model.define("payment_event", {
-  id: model.id().primaryKey(), provider: model.text(), provider_event_id: model.text().unique(), payment_id: model.text().nullable(), cart_id: model.text().nullable(), order_id: model.text().nullable(), event_type: model.text(), status: model.text(), amount_paise: model.bigNumber().nullable(), payload_hash: model.text(), processed_at: model.dateTime().nullable(),
+  id: model.id().primaryKey(), provider: model.text(), provider_event_id: model.text().unique(), provider_transaction_id: model.text().unique(), payment_id: model.text().nullable(), payment_session_id: model.text().nullable(), cart_id: model.text().nullable(), order_id: model.text().nullable(), event_type: model.text(), status: model.text(), amount_paise: model.bigNumber().nullable(), payload_hash: model.text(), processed_at: model.dateTime().nullable(), last_error: model.text().nullable(),
+})
+
+export const RefundRequest = model.define("refund_request", {
+  id: model.id().primaryKey(), payment_id: model.text().index(), idempotency_key: model.text().unique(), amount_paise: model.bigNumber(), status: model.enum(["pending", "submitted", "failed"] as const).default("pending"), requested_by: model.text(), provider_reference: model.text().nullable(), last_error: model.text().nullable(),
 })
 
 export const Invoice = model.define("gst_invoice", {
-  id: model.id().primaryKey(), order_id: model.text().unique(), invoice_number: model.text().unique(), status: model.enum(["pending", "issued", "failed", "void"] as const).default("pending"), subtotal_paise: model.bigNumber(), tax_paise: model.bigNumber(), total_paise: model.bigNumber(), gst_rate_basis_points: model.number(), hsn_snapshot: model.json(), seller_snapshot: model.json(), billing_snapshot: model.json(), pdf_file_id: model.text().nullable(), issued_at: model.dateTime().nullable(),
+  id: model.id().primaryKey(), order_id: model.text().unique(), order_number: model.text(), invoice_number: model.text().unique(), status: model.enum(["pending", "issued", "failed", "void"] as const).default("pending"), subtotal_paise: model.bigNumber(), tax_paise: model.bigNumber(), total_paise: model.bigNumber(), cgst_paise: model.number().default(0), sgst_paise: model.number().default(0), igst_paise: model.number().default(0), gst_rate_basis_points: model.number(), place_of_supply: model.text(), hsn_snapshot: model.json(), seller_snapshot: model.json(), billing_snapshot: model.json(), shipping_snapshot: model.json().nullable(), payment_snapshot: model.json().nullable(), pdf_file_id: model.text().nullable(), issued_at: model.dateTime().nullable(), last_error: model.text().nullable(),
+})
+
+export const InvoiceNumberCounter = model.define("invoice_number_counter", {
+  id: model.id().primaryKey(), year: model.number().unique(), next_sequence: model.number().default(1),
+})
+
+export const NotificationEvent = model.define("notification_event", {
+  id: model.id().primaryKey(), event_key: model.text().unique(), channel: model.text(), template: model.text(), recipient: model.text(), status: model.enum(["pending", "sent", "failed"] as const).default("pending"), payload: model.json(), sent_at: model.dateTime().nullable(), last_error: model.text().nullable(),
 })
 
 export const TermsAcceptance = model.define("terms_acceptance", {

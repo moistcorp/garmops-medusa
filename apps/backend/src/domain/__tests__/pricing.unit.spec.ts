@@ -1,5 +1,5 @@
 import { CATALOG } from "../catalog"
-import { CUSTOM_DYE_MOQ_UNITS, priceConfiguredLine, samplePrice, validateConfiguredLine } from "../pricing"
+import { calculateGstBreakdown, CUSTOM_DYE_MOQ_UNITS, priceConfiguredLine, samplePrice, validateConfiguredLine } from "../pricing"
 
 describe("Garmops authoritative pricing", () => {
   it("contains the active catalog and uses integer paise", () => {
@@ -27,5 +27,19 @@ describe("Garmops authoritative pricing", () => {
     const result = samplePrice("canvas-tote-bag", "One Size", 2)
     expect(result.shippingPaise).toBe(0)
     expect(result.totalPaise).toBeGreaterThan(result.subtotalPaise)
+  })
+  it("keeps MOQ independent for two otherwise identical configured lines", () => {
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 10, sizes: { S: 10 }, allowedSizes: ["S"] })).toThrow()
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 50, sizes: { S: 50 }, allowedSizes: ["S"] })).not.toThrow()
+  })
+  it("rejects unsupported, negative, mismatched, and zero size allocations", () => {
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 50, sizes: { XXL: 50 }, allowedSizes: ["XXL"] })).toThrow()
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 50, sizes: { S: -1, M: 51 }, allowedSizes: ["S", "M"] })).toThrow()
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 50, sizes: { S: 49 }, allowedSizes: ["S"] })).toThrow()
+    expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 0, sizes: {}, allowedSizes: [] })).toThrow()
+  })
+  it("splits GST intra-state and inter-state with integer-safe totals", () => {
+    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Karnataka" })).toMatchObject({ cgstPaise: 2, sgstPaise: 3, igstPaise: 0, taxPaise: 5 })
+    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Maharashtra" })).toMatchObject({ cgstPaise: 0, sgstPaise: 0, igstPaise: 5, taxPaise: 5 })
   })
 })

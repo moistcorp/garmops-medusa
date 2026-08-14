@@ -13,4 +13,13 @@ describe("PayU security", () => {
     const fields = { ...base, status: "success", hash: "" }
     expect(verifyPaymentResponseHash(fields, "secret")).toBe(false)
   })
+  it("rejects malformed, negative, and ambiguous amounts", () => {
+    expect(parseRupeesToPaise("-1.00")).toBeNull()
+    expect(parseRupeesToPaise("1.999")).toBeNull()
+    expect(parseRupeesToPaise("100000000000000.00")).toBeNull()
+  })
+  it("does not accept a changed transaction identity", () => {
+    const fields = { key: "merchant", txnid: "txn-1", amount: "535.00", productinfo: "Order", firstname: "A", email: "a@example.com", status: "success", hash: "a".repeat(128) }
+    expect(verifyPaymentResponseHash({ ...fields, txnid: "txn-2" }, "secret")).toBe(false)
+  })
 })

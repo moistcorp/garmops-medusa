@@ -1,4 +1,5 @@
 import { findCatalogProduct, PRINT_TECHNIQUES } from "./catalog"
+import { MedusaError } from "@medusajs/framework/utils"
 
 export const GST_RATE_BASIS_POINTS = 500
 export const CUSTOM_DYE_MOQ_UNITS = 100
@@ -50,9 +51,36 @@ export type PricingSnapshot = {
   adjustments: readonly { label: string; amountPaise?: number; percent?: number }[]
 }
 
+export type GstBreakdown = {
+  taxablePaise: number
+  cgstPaise: number
+  sgstPaise: number
+  igstPaise: number
+  taxPaise: number
+  placeOfSupply: "intra_state" | "inter_state"
+}
+
 export function calculateTaxPaise(taxablePaise: number, rateBasisPoints = GST_RATE_BASIS_POINTS): number {
-  if (!Number.isSafeInteger(taxablePaise) || taxablePaise < 0) throw new Error("Taxable value must be a non-negative integer number of paise")
+  if (!Number.isSafeInteger(taxablePaise) || taxablePaise < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Taxable value must be a non-negative integer number of paise")
   return Math.round((taxablePaise * rateBasisPoints) / 10_000)
+}
+
+export function calculateGstBreakdown(input: {
+  taxablePaise: number
+  sellerState: string
+  buyerState?: string | null
+  rateBasisPoints?: number
+}): GstBreakdown {
+  const taxPaise = calculateTaxPaise(input.taxablePaise, input.rateBasisPoints)
+  const intraState = Boolean(input.buyerState && input.sellerState.trim().toLowerCase() === input.buyerState.trim().toLowerCase())
+  return {
+    taxablePaise: input.taxablePaise,
+    cgstPaise: intraState ? Math.floor(taxPaise / 2) : 0,
+    sgstPaise: intraState ? taxPaise - Math.floor(taxPaise / 2) : 0,
+    igstPaise: intraState ? 0 : taxPaise,
+    taxPaise,
+    placeOfSupply: intraState ? "intra_state" : "inter_state",
+  }
 }
 
 export function getVolumeDiscountPercent(quantity: number): number {
@@ -65,8 +93,8 @@ function hasAsset(side?: ArtworkSideInput): boolean {
 
 export function priceConfiguredLine(input: PricingInput): PricingSnapshot {
   const item = findCatalogProduct(input.productSlug)
-  if (!item) throw new Error("Product is no longer available")
-  if (!Number.isSafeInteger(input.quantity) || input.quantity <= 0 || input.quantity > 1_000_000) throw new Error("Quantity must be a positive safe integer")
+  if (!item) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
+  if (!Number.isSafeInteger(input.quantity) || input.quantity <= 0 || input.quantity > 1_000_000) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Quantity must be a positive safe integer")
   const adjustments: { label: string; amountPaise?: number; percent?: number }[] = []
   let unitRupees = item.basePriceRupees
   if (input.colourType === "custom_dye") {
@@ -77,6 +105,7 @@ export function priceConfiguredLine(input: PricingInput): PricingSnapshot {
     const artwork = input.artwork?.[side]
     if (hasAsset(artwork) && artwork?.technique) {
       const technique = PRINT_TECHNIQUES[artwork.technique]
+      if (!technique) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Artwork uses an unsupported print technique")
       adjustments.push({ label: `${side === "front" ? "Front" : "Back"} ${technique.label}`, amountPaise: technique.deltaRupees * 100 })
       unitRupees += technique.deltaRupees
     }
@@ -105,18 +134,21 @@ export function priceConfiguredLine(input: PricingInput): PricingSnapshot {
 
 export function validateConfiguredLine(input: PricingInput & { sizes: Record<string, number>; allowedSizes: readonly string[] }): void {
   const item = findCatalogProduct(input.productSlug)
-  if (!item) throw new Error("Product is no longer available")
-  if (input.colourType === "custom_dye" && input.quantity < Math.max(item.minimumOrderQuantity, CUSTOM_DYE_MOQ_UNITS)) throw new Error("Custom dye orders require at least 100 units")
-  if (input.quantity < item.minimumOrderQuantity) throw new Error(`Order quantity must be at least ${item.minimumOrderQuantity}`)
+  if (!item) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
+  if (!Number.isSafeInteger(input.quantity) || input.quantity <= 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Quantity must be a positive safe integer")
+  if (input.colourType === "custom_dye" && input.quantity < Math.max(item.minimumOrderQuantity, CUSTOM_DYE_MOQ_UNITS)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Custom dye orders require at least 100 units")
+  if (input.quantity < item.minimumOrderQuantity) throw new MedusaError(MedusaError.Types.INVALID_DATA, `Order quantity must be at least ${item.minimumOrderQuantity}`)
+  if (!input.sizes || typeof input.sizes !== "object" || Array.isArray(input.sizes)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Size allocation must be an object")
+  const allowedSizes = input.allowedSizes.length ? input.allowedSizes : item.sizes
   for (const [size, quantity] of Object.entries(input.sizes)) {
-    if (!input.allowedSizes.includes(size) || !Number.isInteger(quantity) || quantity < 0) throw new Error("Size allocation contains an unavailable size")
+    if (!allowedSizes.includes(size) || !item.sizes.includes(size) || !Number.isSafeInteger(quantity) || quantity < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Size allocation contains an unavailable size")
   }
-  if (Object.values(input.sizes).reduce((sum, quantity) => sum + quantity, 0) !== input.quantity) throw new Error("Size quantities do not match configured quantity")
+  if (Object.values(input.sizes).reduce((sum, quantity) => sum + quantity, 0) !== input.quantity) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Size quantities do not match configured quantity")
 }
 
 export function samplePrice(productSlug: string, size: string, quantity: number): PricingSnapshot {
   const item = findCatalogProduct(productSlug)
-  if (!item || !item.sizes.includes(size) || !Number.isInteger(quantity) || quantity < 1 || quantity > 100) throw new Error("Sample product, size, or quantity is invalid")
+  if (!item || !item.sizes.includes(size) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Sample product, size, or quantity is invalid")
   const unitPricePaise = item.basePriceRupees * 100
   const subtotalPaise = unitPricePaise * quantity
   const taxPaise = calculateTaxPaise(subtotalPaise)

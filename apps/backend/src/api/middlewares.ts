@@ -12,7 +12,17 @@ export default defineMiddlewares({
   routes: [
     { matcher: "/*", middlewares: [requestId] },
     { matcher: "/foundry/*", middlewares: [authenticate("user", ["session", "bearer"])] },
+    { matcher: "/store/garmops/cart*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/cart-profile", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/cart-lines*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/sample-cart*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/checkout*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/orders*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/invoices*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/designs*", middlewares: [authenticate("customer", ["session", "bearer"])] },
     { matcher: "/store/garmops/files/*", middlewares: [authenticate("customer", ["session", "bearer"])] },
+    { matcher: "/store/garmops/payments/payu/initiate", middlewares: [authenticate("customer", ["session", "bearer"])] },
+    { matcher: "/store/garmops/payments/payu/status", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/payments/payu/recheck", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
   ],
 })

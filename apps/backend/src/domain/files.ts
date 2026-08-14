@@ -1,4 +1,4 @@
-import { z } from "zod"
+import { z } from "@medusajs/framework/zod"
 
 const MiB = 1024 * 1024
 export const UPLOAD_POLICIES = {

@@ -12,6 +12,7 @@
     "start": "npm run start --workspace @garmops/backend",
     "lint": "npm run lint --workspace @garmops/backend",
     "test": "npm run test:unit --workspace @garmops/backend",
+    "test:stage2": "bash scripts/test-stage2.sh",
     "backend:dev": "npm run dev --workspace @garmops/backend",
     "docker:up": "docker compose up --build -d",
     "docker:down": "docker compose down",
@@ -20,7 +21,8 @@
     "db:generate": "npm run db:generate --workspace @garmops/backend --",
     "catalog:bootstrap": "npm run seed:garmops --workspace @garmops/backend",
     "redis:reset": "docker compose down -v",
-    "admin:create": "npm run admin:create --workspace @garmops/backend --"
+    "admin:create": "npm run admin:create --workspace @garmops/backend --",
+    "staff:create": "npm run staff:create --workspace @garmops/backend --"
   },
   "devDependencies": {
     "@medusajs/eslint-plugin": "2.19.0",

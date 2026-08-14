@@ -1,0 +1,22 @@
+name: garmops-medusa-e2e
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: garmops_test
+      POSTGRES_PASSWORD: garmops_test_only
+      POSTGRES_DB: garmops_test_control
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - garmops_medusa_e2e_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garmops_test -d garmops_test_control"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  garmops_medusa_e2e_postgres:
+    name: garmops_medusa_e2e_postgres

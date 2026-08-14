@@ -1,17 +1,17 @@
-import { MedusaService } from "@medusajs/framework/utils"
+import { MedusaError, MedusaService } from "@medusajs/framework/utils"
 import {
-  AuditLog, CartProfile, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentEvent, ProductionJob, ProductionStatusHistory, StaffMember, StoredFile, TermsAcceptance,
+  AuditLog, CartProfile, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, InvoiceNumberCounter, NotificationEvent, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentEvent, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, StoredFile, TermsAcceptance,
 } from "./models/models"
-import { createHash, randomInt } from "node:crypto"
+import { createHash, randomInt, timingSafeEqual } from "node:crypto"
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../domain/production"
 
-class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, StaffMember, PaymentEvent, Invoice, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
+class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
   updateOrderConfigurationSnapshots = async (): Promise<never> => {
-    throw new Error("Order configuration snapshots are immutable")
+    throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Order configuration snapshots are immutable")
   }
 
   deleteOrderConfigurationSnapshots = async (): Promise<never> => {
-    throw new Error("Order configuration snapshots are immutable")
+    throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Order configuration snapshots are immutable")
   }
 
   async createVersion(input: { projectId: string; configuration: Record<string, unknown>; productSlug: string; quantity: number; schemaVersion?: number; clientOperationId?: string }) {
@@ -41,17 +41,34 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
     const job = await this.retrieveProductionJob(input.jobId)
     const current = job.status as OrderStatus
     if (current === "on_hold") {
-      if (!job.hold_from_status || input.target !== job.hold_from_status) throw new Error("A held job can only resume its previous status")
-    } else if (!(ORDER_TRANSITIONS[current] ?? []).includes(input.target)) throw new Error(`Invalid production transition: ${current} -> ${input.target}`)
+      if (!job.hold_from_status || input.target !== job.hold_from_status) throw new MedusaError(MedusaError.Types.CONFLICT, "A held job can only resume its previous status")
+    } else if (!(ORDER_TRANSITIONS[current] ?? []).includes(input.target)) throw new MedusaError(MedusaError.Types.CONFLICT, `Invalid production transition: ${current} -> ${input.target}`)
     const updated = await this.updateProductionJobs({ id: input.jobId, status: input.target, hold_from_status: current === "on_hold" ? null : input.target === "on_hold" ? current : job.hold_from_status })
     await this.createProductionStatusHistories({ production_job_id: input.jobId, from_status: current, to_status: input.target, actor_id: input.actorId ?? null, request_id: input.requestId ?? null, reason: input.reason ?? null })
     return updated
   }
 
   async createOtp(email: string, requestId?: string) {
+    const normalizedEmail = email.trim().toLowerCase()
+    const recent = await this.listOtpChallenges({ email: normalizedEmail }, { order: { created_at: "DESC" }, take: 10 })
+    const windowStart = Date.now() - 10 * 60_000
+    if (recent.filter((challenge) => new Date(challenge.created_at).getTime() >= windowStart).length >= 5) throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Too many verification codes requested")
     const code = randomInt(100000, 1000000).toString()
-    const challenge = await this.createOtpChallenges({ email: email.trim().toLowerCase(), code_hash: createHash("sha256").update(code).digest("hex"), expires_at: new Date(Date.now() + 10 * 60_000), attempts: 0, consumed: false, request_id: requestId ?? null })
+    const challenge = await this.createOtpChallenges({ email: normalizedEmail, code_hash: createHash("sha256").update(code).digest("hex"), expires_at: new Date(Date.now() + 10 * 60_000), attempts: 0, consumed: false, request_id: requestId ?? null })
     return { challenge, code }
+  }
+
+  async consumeOtp(challengeId: string, code: string) {
+    const challenge = await this.retrieveOtpChallenge(challengeId)
+    if (challenge.consumed || new Date(challenge.expires_at).getTime() < Date.now() || challenge.attempts >= 5) throw new MedusaError(MedusaError.Types.UNAUTHORIZED, "The code is invalid or expired")
+    const expected = Buffer.from(challenge.code_hash, "hex")
+    const supplied = createHash("sha256").update(code).digest()
+    if (expected.length !== supplied.length || !timingSafeEqual(expected, supplied)) {
+      await this.updateOtpChallenges({ id: challenge.id, attempts: challenge.attempts + 1 })
+      throw new MedusaError(MedusaError.Types.UNAUTHORIZED, "The code is invalid or expired")
+    }
+    await this.updateOtpChallenges({ id: challenge.id, consumed: true })
+    return challenge
   }
 
   async issueOrderNumber(orderType: "configured" | "sample", date = new Date()) {
@@ -64,11 +81,35 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
     return `${orderType === "configured" ? "GAR" : "SAM"}-${year}-${String(sequence).padStart(6, "0")}`
   }
 
-  async recordPaymentEvent(input: { providerEventId: string; paymentId?: string; cartId?: string; orderId?: string; eventType: string; status: string; amountPaise?: number; payloadHash: string }) {
-    const existing = await this.listPaymentEvents({ provider_event_id: input.providerEventId })
-    if (existing[0]) return { event: existing[0], duplicate: true }
-    const event = await this.createPaymentEvents({ provider: "payu", provider_event_id: input.providerEventId, payment_id: input.paymentId ?? null, cart_id: input.cartId ?? null, order_id: input.orderId ?? null, event_type: input.eventType, status: input.status, amount_paise: input.amountPaise ?? null, payload_hash: input.payloadHash, processed_at: new Date() })
-    return { event, duplicate: false }
+  async issueInvoiceNumber(date = new Date()) {
+    const year = date.getUTCFullYear()
+    const counters = await this.listInvoiceNumberCounters({ year })
+    const counter = counters[0] ?? await this.createInvoiceNumberCounters({ year, next_sequence: 1 })
+    const sequence = counter.next_sequence
+    await this.updateInvoiceNumberCounters({ id: counter.id, next_sequence: sequence + 1 })
+    return `INV-${year}-${String(sequence).padStart(6, "0")}`
+  }
+
+  async recordPaymentEvent(input: { providerEventId: string; providerTransactionId: string; paymentId?: string; paymentSessionId?: string; cartId?: string; orderId?: string; eventType: string; status: string; amountPaise?: number; payloadHash: string }) {
+    const existing = (await this.listPaymentEvents({ provider_transaction_id: input.providerTransactionId }))[0] ?? (await this.listPaymentEvents({ provider_event_id: input.providerEventId }))[0]
+    if (existing) {
+      if (existing.payload_hash !== input.payloadHash) await this.updatePaymentEvents({ id: existing.id, event_type: input.eventType, payload_hash: input.payloadHash })
+      return { event: existing, duplicate: true }
+    }
+    try {
+      const event = await this.createPaymentEvents({ provider: "payu", provider_event_id: input.providerEventId, provider_transaction_id: input.providerTransactionId, payment_id: input.paymentId ?? null, payment_session_id: input.paymentSessionId ?? null, cart_id: input.cartId ?? null, order_id: input.orderId ?? null, event_type: input.eventType, status: input.status, amount_paise: input.amountPaise ?? null, payload_hash: input.payloadHash, processed_at: null, last_error: null })
+      return { event, duplicate: false }
+    } catch (error) {
+      // Two callback/webhook deliveries can pass the read-before-create check
+      // concurrently. Unique constraints are the final idempotency boundary.
+      const concurrent = (await this.listPaymentEvents({ provider_transaction_id: input.providerTransactionId }))[0] ?? (await this.listPaymentEvents({ provider_event_id: input.providerEventId }))[0]
+      if (concurrent) return { event: concurrent, duplicate: true }
+      throw error
+    }
+  }
+
+  async markPaymentEvent(input: { id: string; status: string; orderId?: string; error?: string }) {
+    return this.updatePaymentEvents({ id: input.id, status: input.status, order_id: input.orderId ?? null, last_error: input.error ?? null, processed_at: input.status === "completed" ? new Date() : null })
   }
 }
 

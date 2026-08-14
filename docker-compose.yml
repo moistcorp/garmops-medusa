@@ -13,9 +13,35 @@ x-medusa-environment: &medusa-environment
   ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9000}
   AUTH_CORS: ${AUTH_CORS:-http://localhost:3000,http://localhost:9000}
   MEDUSA_BACKEND_URL: ${MEDUSA_BACKEND_URL:-http://localhost:9000}
+  PAYU_ENV: ${PAYU_ENV:-test}
+  PAYU_KEY: ${PAYU_KEY:-}
+  PAYU_SALT: ${PAYU_SALT:-}
+  PAYU_CALLBACK_URL: ${PAYU_CALLBACK_URL:-http://localhost:9000/garmops/payments/payu/callback}
+  R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+  R2_PRIVATE_BUCKET: ${R2_PRIVATE_BUCKET:-}
+  R2_PUBLIC_BUCKET: ${R2_PUBLIC_BUCKET:-}
+  R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+  MALWARE_SCANNER_HOST: ${MALWARE_SCANNER_HOST:-malware-scanner}
+  MALWARE_SCANNER_PORT: ${MALWARE_SCANNER_PORT:-3310}
+  MALWARE_SCAN_TIMEOUT_MS: ${MALWARE_SCAN_TIMEOUT_MS:-15000}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM: ${RESEND_FROM:-Garmops <noreply@example.com>}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-http://localhost:9000/auth/customer/google/callback}
+  AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:-}
+  INVOICE_SELLER_NAME: ${INVOICE_SELLER_NAME:-Garmops}
+  INVOICE_SELLER_GSTIN: ${INVOICE_SELLER_GSTIN:-}
+  INVOICE_SELLER_ADDRESS: ${INVOICE_SELLER_ADDRESS:-}
+  INVOICE_SELLER_STATE: ${INVOICE_SELLER_STATE:-}
+  INVOICE_SELLER_PIN: ${INVOICE_SELLER_PIN:-}
 
 x-medusa-depends-on: &medusa-depends-on
   redis:
+    condition: service_healthy
+  malware-scanner:
     condition: service_healthy
 
 services:
@@ -32,6 +58,20 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    networks: [backend]
+
+  malware-scanner:
+    image: clamav/clamav:stable-debian
+    restart: unless-stopped
+    expose:
+      - "3310"
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 /etc/hosts >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
     networks: [backend]
 
   medusa:
@@ -100,6 +140,8 @@ services:
 volumes:
   redis_data:
     name: garmops_medusa_redis_data
+  clamav_data:
+    name: garmops_medusa_clamav_data
 
 networks:
   backend:
