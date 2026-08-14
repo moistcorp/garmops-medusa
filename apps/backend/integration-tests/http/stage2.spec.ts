@@ -221,8 +221,20 @@ medusaIntegrationTestRunner({
         const fields = sessionData.fields ?? sessionData
         const response = { key: fields.key, txnid: fields.txnid, amount: fields.amount, productinfo: fields.productinfo, firstname: fields.firstname, email: fields.email, udf1: fields.udf1, udf5: fields.udf5, status: "success", mihpayid: `mih-${Date.now()}` }
         const responseParts = [process.env.PAYU_SALT ?? "stage2-test-salt", response.status, "", "", "", "", "", response.udf5 ?? "", "", "", "", response.udf1 ?? "", response.email, response.firstname, response.productinfo, response.amount, response.txnid, response.key]
-        const callback = await api.post("/store/garmops/payments/payu/callback", { ...response, hash: createHash("sha512").update(responseParts.join("|")).digest("hex") })
-        expect([200, 202]).toContain(callback.status)
+        const callbackPayload = { ...response, hash: createHash("sha512").update(responseParts.join("|")).digest("hex") }
+        const previousFailure = process.env.GARMOPS_TEST_FAILURE
+        process.env.GARMOPS_TEST_FAILURE = "invoice"
+        let callback
+        try {
+          callback = await api.post("/store/garmops/payments/payu/callback", callbackPayload)
+        } finally {
+          if (previousFailure === undefined) delete process.env.GARMOPS_TEST_FAILURE
+          else process.env.GARMOPS_TEST_FAILURE = previousFailure
+        }
+        expect(callback.status).toBe(202)
+        const retry = await api.post("/store/garmops/payments/payu/recheck", { cartId, txnid: response.txnid }, { headers })
+        expect(retry.status).toBe(200)
+        expect(retry.data.status).toBe("order_complete")
         const duplicate = await api.post("/store/garmops/payments/payu/webhook", { ...response, hash: createHash("sha512").update(responseParts.join("|")).digest("hex") })
         expect([200, 202]).toContain(duplicate.status)
         const orders = await api.get("/store/garmops/orders", { headers })

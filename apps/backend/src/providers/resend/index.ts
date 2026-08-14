@@ -1,12 +1,14 @@
 import type { INotificationProvider, ProviderSendNotificationDTO, ProviderSendNotificationResultsDTO } from "@medusajs/framework/types"
 import { MedusaError, ModuleProvider, Modules } from "@medusajs/framework/utils"
 import { testState } from "../../integrations/test-doubles"
+import { injectTestFailure } from "../../integrations/test-failures"
 
 export class ResendNotificationProvider implements INotificationProvider {
   static identifier = "resend"
   constructor(private readonly options: { apiKey?: string; from?: string } = {}) {}
   async send(notification: ProviderSendNotificationDTO): Promise<ProviderSendNotificationResultsDTO> {
     if (process.env.GARMOPS_TEST_DOUBLES === "true") {
+      injectTestFailure("resend")
       testState().notifications.push({ ...notification as unknown as Record<string, unknown>, sentAt: new Date().toISOString() })
       return { id: `test-notification-${testState().notifications.length}` }
     }

@@ -1,0 +1,32 @@
+name: garmops-medusa-stage41-browser
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: garmops_browser
+      POSTGRES_PASSWORD: garmops_browser_only
+      POSTGRES_DB: garmops_browser_control
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - garmops_medusa_stage41_browser_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garmops_browser -d garmops_browser_control"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4.5-alpine
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  garmops_medusa_stage41_browser_postgres:
+    name: garmops_medusa_stage41_browser_postgres

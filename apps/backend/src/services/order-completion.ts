@@ -7,6 +7,7 @@ import { calculateGstBreakdown } from "../domain/pricing"
 import { renderInvoicePdf, type InvoiceData } from "../domain/invoice"
 import { putPrivateObject } from "../integrations/r2"
 import { randomUUID } from "node:crypto"
+import { injectTestFailure } from "../integrations/test-failures"
 
 type AddressLike = { first_name?: string; last_name?: string; company?: string; address_1?: string; address_2?: string; city?: string; postal_code?: string; province?: string; state?: string; metadata?: Record<string, unknown> }
 type Container = MedusaContainer
@@ -68,6 +69,7 @@ async function ensureInvoice(container: Container, input: { order: Awaited<Retur
   const invoice = existing ?? await service.createInvoices({ order_id: input.order.id, order_number: input.orderNumber, invoice_number: invoiceNumber, status: "pending", subtotal_paise: computed, tax_paise: gst.taxPaise, total_paise: totalPaise, cgst_paise: gst.cgstPaise, sgst_paise: gst.sgstPaise, igst_paise: gst.igstPaise, gst_rate_basis_points: 500, place_of_supply: gst.placeOfSupply, hsn_snapshot: { lines: lines.map((line) => ({ hsn: line.hsn, description: line.description })) }, seller_snapshot: sellerSnapshot, billing_snapshot: billingSnapshot, shipping_snapshot: shippingSnapshot, payment_snapshot: paymentSnapshot, pdf_file_id: null, issued_at: null, last_error: null })
   if (invoice.status === "issued" && invoice.pdf_file_id) return invoice
   try {
+    injectTestFailure("invoice")
     const pdf = renderInvoicePdf(data)
     let fileId = invoice.pdf_file_id ?? randomUUID()
     const key = `garmops/invoices/${input.order.id}/${invoice.invoice_number}.pdf`

@@ -2,6 +2,11 @@ import { defineMiddlewares, authenticate } from "@medusajs/framework/http"
 import type { MedusaNextFunction, MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { randomUUID } from "node:crypto"
 
+export const removeServerFingerprint = async (_req: MedusaRequest, res: MedusaResponse, next: MedusaNextFunction) => {
+  res.removeHeader("X-Powered-By")
+  await next()
+}
+
 const requestId = async (req: MedusaRequest, res: MedusaResponse, next: MedusaNextFunction) => {
   const id = req.get("x-request-id")?.slice(0, 128) || randomUUID()
   req.requestId = id
@@ -10,6 +15,7 @@ const requestId = async (req: MedusaRequest, res: MedusaResponse, next: MedusaNe
 }
 export default defineMiddlewares({
   routes: [
+    { matcher: "/*", middlewares: [removeServerFingerprint] },
     { matcher: "/*", middlewares: [requestId] },
     { matcher: "/foundry/*", middlewares: [authenticate("user", ["session", "bearer"])] },
     { matcher: "/store/garmops/cart*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
