@@ -3,6 +3,7 @@ import { createPaymentRequestHash, formatPaiseAsRupees, parseRupeesToPaise, veri
 describe("PayU security", () => {
   it("round-trips INR amounts without floating point arithmetic", () => {
     expect(formatPaiseAsRupees(12345)).toBe("123.45")
+    expect(formatPaiseAsRupees({ value: "12345", precision: 20 })).toBe("123.45")
     expect(parseRupeesToPaise("123.45")).toBe(12345)
     expect(parseRupeesToPaise("123.456")).toBeNull()
   })

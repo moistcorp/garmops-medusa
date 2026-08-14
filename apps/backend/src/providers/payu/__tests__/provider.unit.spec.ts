@@ -10,6 +10,6 @@ describe("PayU provider contract", () => {
   it("does not authorize a session before a verified server event", async () => {
     const provider = new PayuPaymentProvider({}, { key: "merchant", salt: "secret" })
     expect((await provider.authorizePayment({ data: {} })).status).toBe("pending_authorization")
-    expect((await provider.authorizePayment({ data: { verified: true, provider_status: "success" } })).status).toBe("authorized")
+    expect((await provider.authorizePayment({ data: { verified: true, provider_status: "success" } })).status).toBe("captured")
   })
 })

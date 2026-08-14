@@ -20,6 +20,7 @@
     "db:migrate": "docker compose exec medusa npm run db:migrate --workspace @garmops/backend",
     "db:generate": "npm run db:generate --workspace @garmops/backend --",
     "catalog:bootstrap": "npm run seed:garmops --workspace @garmops/backend",
+    "setup:publishable-key": "npm run setup:publishable-key --workspace @garmops/backend",
     "redis:reset": "docker compose down -v",
     "admin:create": "npm run admin:create --workspace @garmops/backend --",
     "staff:create": "npm run staff:create --workspace @garmops/backend --"

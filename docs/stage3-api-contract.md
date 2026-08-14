@@ -59,7 +59,7 @@ Garmops staff record maps the Medusa user ID to exactly `founder` or
 | GET | `/foundry/session` | founder/operations | Safe current staff identity. |
 | DELETE | `/foundry/session` | founder/operations | Invalidates the current session cookie. |
 | GET | `/foundry/orders` | founder/operations | Operational order list from production jobs. |
-| GET | `/foundry/orders/:production-job-id` | founder/operations | Order, customer-facing details, production job, snapshots and invoice metadata. |
+| GET | `/foundry/orders/:production-job-id` | founder/operations | Order, customer-facing details, production job, snapshots, invoice metadata, and safe `order.payment.id` when a Medusa payment exists. Payment collections/provider payloads are omitted. |
 | POST | `/foundry/orders/:id/artwork-review` | founder/operations | `{fileId, decision: approve|reject}`; clean finalized files only; creates audit history. |
 | POST | `/foundry/orders/:id/status` | founder/operations | `{status, reason?}`; only domain state-machine transitions are accepted. |
 | GET | `/foundry/payments/:id` | founder | Safe payment inspection; raw provider secrets are never returned. |

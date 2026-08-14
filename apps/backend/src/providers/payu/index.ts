@@ -36,12 +36,12 @@ export class PayuPaymentProvider implements IPaymentProvider {
     const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
     return { id: txnid, status: "pending", data: { provider: "payu", environment, checkoutUrl: environment === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment", fields } }
   }
-  async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> { return { status: "pending", data: { amount: String(input.amount), currency_code: input.currency_code } } }
+  async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> { return { status: "pending", data: { ...(input.data ?? {}), amount: String(input.amount), currency_code: input.currency_code } } }
   async deletePayment(_input: DeletePaymentInput): Promise<DeletePaymentOutput> { return {} }
   async authorizePayment(input: AuthorizePaymentInput): Promise<AuthorizePaymentOutput> {
     if (input.data?.verified !== true) return { status: "pending_authorization", data: { reason: "Awaiting verified PayU callback" } }
     if (input.data?.provider_status !== "success") return { status: "error", data: { reason: "PayU did not report success" } }
-    return { status: "authorized", data: { mihpayid: input.data.mihpayid, verified_at: input.data.verified_at } }
+    return { status: "captured", data: { mihpayid: input.data.mihpayid, verified_at: input.data.verified_at } }
   }
   async capturePayment(_input: CapturePaymentInput): Promise<CapturePaymentOutput> { return {} }
   async refundPayment(input: RefundPaymentInput): Promise<RefundPaymentOutput> {
@@ -49,11 +49,11 @@ export class PayuPaymentProvider implements IPaymentProvider {
     if (!txnid) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU refund is missing transaction identity")
     if (process.env.GARMOPS_TEST_DOUBLES === "true") {
       testState().paymentCommands.push({ command: "cancel_refund_transaction", txnid, amount: input.amount })
-      return { data: { amount: formatPaiseAsRupees(Number(input.amount)), status: "refund_requested", provider_response: { status: "1", test: true } } }
+      return { data: { amount: formatPaiseAsRupees(input.amount), status: "refund_requested", provider_response: { status: "1", test: true } } }
     }
-    const result = await this.command("cancel_refund_transaction", txnid, formatPaiseAsRupees(Number(input.amount)))
+    const result = await this.command("cancel_refund_transaction", txnid, formatPaiseAsRupees(input.amount))
     if (String(result.status) !== "1") throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "PayU rejected the refund request")
-    return { data: { amount: formatPaiseAsRupees(Number(input.amount)), status: "refund_requested", provider_response: result } }
+    return { data: { amount: formatPaiseAsRupees(input.amount), status: "refund_requested", provider_response: result } }
   }
   async retrievePayment(input: RetrievePaymentInput): Promise<RetrievePaymentOutput> { return { data: { ...(input.data ?? {}), ...(await this.command("verify_payment", String(input.data?.txnid ?? input.data?.mihpayid ?? ""))) } } }
   async cancelPayment(_input: CancelPaymentInput): Promise<CancelPaymentOutput> { return {} }

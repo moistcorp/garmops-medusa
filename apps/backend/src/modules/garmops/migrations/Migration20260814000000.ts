@@ -36,6 +36,7 @@ export class Migration20260814000000 extends Migration {
         "created_at" timestamptz not null default now(), "updated_at" timestamptz not null default now(), "deleted_at" timestamptz null
       );
       create index if not exists "IDX_refund_request_payment" on "refund_request" ("payment_id");
+      alter table "refund_request" add column if not exists "raw_amount_paise" text null;
     `)
   }
 
