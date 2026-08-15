@@ -38,8 +38,6 @@ export class EmailOtpAuthProvider extends AbstractAuthModuleProvider {
       const challenge = await service.consumeOtp(challengeId, code)
       if (challenge.email !== email) return { success: false, error: "Invalid email OTP request" }
       const customers = this.dependencies_[Modules.CUSTOMER] as { listCustomers(filters: { email: string }): Promise<Array<{ id: string }>>; createCustomers(data: Record<string, unknown>): Promise<{ id: string }> }
-      const staff = await service.listStaffMembers({ email })
-      if (staff.length) return { success: false, error: "This identity cannot authenticate as a customer" }
       const customer = (await customers.listCustomers({ email }))[0] ?? await customers.createCustomers({ email, metadata: { authSource: "email_otp" } })
       let identity
       try { identity = await identityService.retrieve({ entity_id: email }) } catch (error) {
