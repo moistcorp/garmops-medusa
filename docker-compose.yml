@@ -86,7 +86,7 @@ services:
     command: ["/server/docker/start-dev.sh"]
     depends_on: *medusa-depends-on
     ports:
-      - "${PORT:-9000}:9000"
+      - "127.0.0.1:${PORT:-9000}:9000"
     volumes:
       - ./apps/backend/src:/server/apps/backend/src
       - ./apps/backend/medusa-config.ts:/server/apps/backend/medusa-config.ts
