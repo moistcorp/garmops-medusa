@@ -65,11 +65,13 @@ For Mac testing or a self-contained Hyper-V Ubuntu host, clone `garmops` and
 ./scripts/portable-smoke.sh
 ```
 
-Docker is the only application runtime required on the host. The startup script
-creates an ignored `.env.portable` with random infrastructure secrets, builds
-both repositories, starts persistent PostgreSQL/Redis/ClamAV volumes, applies
-migrations, bootstraps the 10-product catalog, creates and shares the Medusa
-publishable key, and starts these loopback-only services:
+Docker is the only application runtime required on the host. Neon PostgreSQL
+is the authoritative database, so replacing the Mac or Ubuntu VM does not move
+business data. The startup script reads `DATABASE_URL` from the backend `.env`
+and `MEDUSA_PUBLISHABLE_API_KEY` from the frontend `.env.local` (or accepts
+either in `.env.portable`), creates random local infrastructure secrets, builds
+both repositories, starts persistent Redis/ClamAV volumes, applies migrations,
+checks the 10-product catalog and starts these loopback-only services:
 
 - Customer/configurator: <http://localhost:3000/configurator>
 - Foundry: <http://localhost:3001>
@@ -80,12 +82,13 @@ Routine restarts preserve data:
 
 ```bash
 ./scripts/portable-up.sh
-docker compose --env-file .env.portable -f docker-compose.portable.yml down
+npm run portable:down
 ```
 
 Do not add `-v` to the down command unless you intentionally want to erase the
-portable PostgreSQL, Redis, ClamAV, and generated-key volumes. Create Medusa
-Admin and Foundry users after first startup using the commands below. Before
+portable Redis and ClamAV volumes. Neon data is unaffected by routine container
+replacement. Create Medusa Admin and Foundry users after first startup using
+the commands below. Before
 putting the stack behind Cloudflare Tunnel, update `.env.portable` with HTTPS
 application/API origins, matching CORS origins, strong external-service
 credentials, and the real callback URLs; then rebuild the stack.
@@ -103,6 +106,10 @@ Linux host networking. Then start everything, including the tunnel, with:
 PORTABLE_WITH_TUNNEL=1 ./scripts/portable-up.sh
 ./scripts/portable-smoke.sh
 ```
+
+Transfer the ignored backend `.env` and frontend `.env.local` through a secure
+channel before the first Ubuntu startup, or put their required Neon URL and
+publishable key values in `.env.portable`. Never commit these files.
 
 If the Windows host must open the dashboards directly through the VM address,
 set `BIND_ADDRESS=0.0.0.0` and set `CUSTOMER_APP_URL`, `STAFF_APP_URL`, CORS,
@@ -125,7 +132,7 @@ Open the bundled Admin at:
 Create an account manually; no credentials are committed:
 
 ```bash
-docker compose --env-file .env.portable -f docker-compose.portable.yml exec medusa-server \
+./scripts/portable-compose.sh exec medusa-server \
   npm run admin:create -- --email admin@example.com --password 'replace-with-a-strong-password'
 ```
 
@@ -135,7 +142,7 @@ Create a Foundry staff account without putting its password in shell history:
 
 ```bash
 printf '%s' 'replace-with-a-strong-password' | \
-  docker compose --env-file .env.portable -f docker-compose.portable.yml exec -T medusa-server \
+  ./scripts/portable-compose.sh exec -T medusa-server \
   npx medusa exec ./src/scripts/create-staff.js -- --email founder@example.com --role founder \
   --display-name 'Founder' --password-stdin
 ```
