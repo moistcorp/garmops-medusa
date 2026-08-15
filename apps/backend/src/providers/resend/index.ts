@@ -5,7 +5,8 @@ import { injectTestFailure } from "../../integrations/test-failures"
 
 export class ResendNotificationProvider implements INotificationProvider {
   static identifier = "resend"
-  constructor(private readonly options: { apiKey?: string; from?: string } = {}) {}
+  private readonly options: { apiKey?: string; from?: string }
+  constructor(_container: Record<string, unknown>, options: { apiKey?: string; from?: string } = {}) { this.options = options }
   async send(notification: ProviderSendNotificationDTO): Promise<ProviderSendNotificationResultsDTO> {
     if (process.env.NODE_ENV !== "production" && process.env.GARMOPS_TEST_DOUBLES === "true") {
       injectTestFailure("resend")
