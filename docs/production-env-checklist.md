@@ -3,6 +3,11 @@
 This is an inventory, not a place to store values. Use a secret manager or
 deployment environment. Never commit production values.
 
+The names below are the names consumed by the current repositories. Do not
+substitute illustrative names such as `PAYU_ENVIRONMENT`, `R2_ENDPOINT`,
+`BACKEND_URL`, or `STORE_URL` unless the application code is changed and
+verified at the same time.
+
 ## Frontend (`/Users/rahul/garmops`)
 
 Required/safe public configuration:
@@ -33,7 +38,7 @@ Optional browser-safe integrations:
 
 Runtime and database:
 
-- `NODE_ENV`, `PORT`, `MEDUSA_BACKEND_URL`, `MEDUSA_WORKER_MODE`
+- `NODE_ENV=production`, `PORT`, `MEDUSA_BACKEND_URL`, `MEDUSA_WORKER_MODE`
 - `DATABASE_URL` (Neon PostgreSQL)
 - `REDIS_URL`, `CACHE_REDIS_URL`, `LOCKING_REDIS_URL`
 - `DISABLE_MEDUSA_ADMIN`
@@ -47,7 +52,7 @@ Origins and authentication:
 
 Payments and notifications:
 
-- `PAYU_ENV`, `PAYU_KEY`, `PAYU_SALT`, `PAYU_CALLBACK_URL`
+- `PAYU_ENV=live`, `PAYU_KEY`, `PAYU_SALT`, `PAYU_CALLBACK_URL`
 - `RESEND_API_KEY`, `RESEND_FROM`
 
 Files and malware scanning:
@@ -61,6 +66,24 @@ Invoice/seller configuration:
 
 - `INVOICE_SELLER_NAME`, `INVOICE_SELLER_GSTIN`, `INVOICE_SELLER_ADDRESS`
 - `INVOICE_SELLER_STATE`, `INVOICE_SELLER_PIN`
+
+`PAYU_CALLBACK_URL` is used for both hosted-checkout success and failure
+returns and must be the implemented public endpoint:
+
+```text
+https://api.garmops.com/garmops/payments/payu/callback
+```
+
+Register the separate provider webhook endpoint in PayU's dashboard; it is not
+read from an application environment variable:
+
+```text
+https://api.garmops.com/garmops/payments/payu/webhook
+```
+
+The frontend must receive only `NEXT_PUBLIC_MEDUSA_BACKEND_URL` and
+`MEDUSA_PUBLISHABLE_API_KEY`. PayU keys/salt, database, Redis, R2, Resend,
+Google, JWT, cookie, and MFA secrets belong only to the backend deployment.
 
 Test-only variables must not be enabled in production:
 
@@ -82,9 +105,15 @@ in a deployed environment. Accepted local points are `r2-upload`, `r2-verify`,
 - Configure R2 bucket policy, CORS, and private signed-object behavior.
 - Configure backend/frontend DNS, TLS, reverse proxy, and approved CORS origins.
 - Confirm secret rotation, backups, monitoring, and rollback access.
+- Verify the production Neon project/branch identity before migrations; never
+  use a reset, drop, truncate, or development database command against it.
+- Generate unique production values for `JWT_SECRET`, `COOKIE_SECRET`, and
+  `AUTH_MFA_ENCRYPTION_KEY` with `openssl rand -hex 32`; do not print or commit
+  the generated values.
 
-## Stage 4.2 verification state
+## Local verification state
 
 The local environment contract is documented and the rebuilt production image
 booted successfully. External production values and provider registrations
-remain manual launch gates; no live PayU or real notification was used.
+remain manual launch gates; no live PayU charge, live refund, or real
+production notification was used.

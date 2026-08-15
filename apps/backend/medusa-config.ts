@@ -59,7 +59,7 @@ module.exports = defineConfig({
       resolve: '@medusajs/medusa/payment',
       options: {
         providers: [
-          { resolve: './src/providers/payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test' } },
+          { resolve: './src/providers/payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test', callbackUrl: process.env.PAYU_CALLBACK_URL } },
         ],
       },
     },

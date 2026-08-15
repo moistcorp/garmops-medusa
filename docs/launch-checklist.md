@@ -61,13 +61,13 @@ authorized.
 - [ ] Payment reconciliation and artifact retry procedure documented
 - [ ] Incident contacts and customer-support communication path confirmed
 
-### Stage 4.2 current gate status
+### Stage 5 current gate status
 
-**OPEN / DO NOT LAUNCH.** Backend/frontend automated gates and rebuilt local
-production images pass. The dependency findings are classified and absent from
-the runtime image, but direct P0/P1 failure, abuse, CORS/cookie, IDOR, and
-browser visual/recovery matrices remain incomplete. External wiring and explicit
-live-payment authorization also remain open.
+**OPEN / DO NOT LAUNCH.** Local frontend/backend gates, isolated HTTP checks,
+the authenticated browser gate, and rebuilt image checks are green. Production
+VM, Neon identity/migrations, provider configuration, DNS/TLS, Vercel, R2,
+Resend, Google, monitoring, backup/restore, and explicit live-payment/refund
+authorization remain open until verified with production evidence.
 
 ## Release hygiene
 

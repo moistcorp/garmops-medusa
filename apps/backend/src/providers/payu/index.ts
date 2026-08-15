@@ -33,7 +33,8 @@ export class PayuPaymentProvider implements IPaymentProvider {
     const firstname = String(input.context?.customer?.first_name ?? "Customer")
     const email = String(input.context?.customer?.email ?? data.email ?? "")
     const productinfo = String(data.productinfo ?? "Garmops order").slice(0, 200)
-    const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
+    const callbackUrl = this.options.callbackUrl ?? process.env.PAYU_CALLBACK_URL
+    const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, ...(callbackUrl ? { surl: callbackUrl, furl: callbackUrl } : {}), hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
     return { id: txnid, status: "pending", data: { provider: "payu", environment, checkoutUrl: environment === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment", fields } }
   }
   async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> { return { status: "pending", data: { ...(input.data ?? {}), amount: String(input.amount), currency_code: input.currency_code } } }

@@ -53,8 +53,8 @@ External systems:
 
 8. Confirm CORS, cookies, Google callback, PayU callback/webhook, signed R2
    downloads, Resend sender, and worker scheduling before opening traffic.
-9. Run the synthetic launch smoke: OTP, catalog, cart, test payment, order,
-   invoice, Foundry access, artwork gate, and test refund.
+9. Run the synthetic launch smoke: OTP, catalog, cart, non-live payment
+   fixture, order, invoice, Foundry access, artwork gate, and test refund.
 
 ## Recovery
 
@@ -86,6 +86,36 @@ External systems:
 - Never use production customer data as a fixture.
 - Never print secrets in logs, issue reports, or shell output.
 - Do not delete persistent volumes as part of routine recovery.
+
+## Production network boundary
+
+The production Compose profile binds Medusa to `127.0.0.1:${PORT:-9000}`.
+Terminate TLS at the reverse proxy and proxy only the required API routes to
+that loopback listener. The VM firewall should expose only restricted SSH and
+the HTTP/HTTPS listeners:
+
+```text
+22/tcp   restricted SSH
+80/tcp   HTTP redirect to HTTPS
+443/tcp  HTTPS
+```
+
+Redis (`6379`) and ClamAV (`3310`) are Compose-network services and must not be
+published on the public interface. Confirm this with `ss -lntp` and an external
+port scan before enabling DNS.
+
+## PayU route inventory
+
+Use only the implemented non-store provider routes:
+
+```text
+POST https://api.garmops.com/garmops/payments/payu/callback
+POST https://api.garmops.com/garmops/payments/payu/webhook
+```
+
+The legacy `/store/garmops/payments/payu/*` routes are not provider dashboard
+targets. Live PayU configuration, dashboard registration, payment, and refund
+remain explicit human authorization gates.
 
 ## Stage 4.1 isolated browser verification
 

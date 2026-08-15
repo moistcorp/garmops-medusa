@@ -111,8 +111,10 @@ services:
     command: ["/server/docker/start-production.sh"]
     depends_on:
       <<: *medusa-depends-on
+    # The reverse proxy owns the public 80/443 listeners. Keep Medusa on the
+    # loopback interface so the application port is not internet-reachable.
     ports:
-      - "${PORT:-9000}:9000"
+      - "127.0.0.1:${PORT:-9000}:9000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 9000) + '/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
       interval: 10s

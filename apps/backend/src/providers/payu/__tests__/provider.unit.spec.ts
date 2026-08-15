@@ -2,10 +2,14 @@ import { PayuPaymentProvider } from "../index"
 
 describe("PayU provider contract", () => {
   it("builds an INR minor-unit payment request", async () => {
-    const provider = new PayuPaymentProvider({}, { key: "merchant", salt: "secret", environment: "test" })
+    const provider = new PayuPaymentProvider({}, { key: "merchant", salt: "secret", environment: "test", callbackUrl: "https://api.example.test/garmops/payments/payu/callback" })
     const result = await provider.initiatePayment({ amount: 53500, currency_code: "inr", data: { txnid: "txn-1", cart_id: "cart-1" } })
     expect(result.id).toBe("txn-1")
-    expect((result.data?.fields as Record<string, unknown>).amount).toBe("535.00")
+    expect((result.data?.fields as Record<string, unknown>)).toMatchObject({
+      amount: "535.00",
+      surl: "https://api.example.test/garmops/payments/payu/callback",
+      furl: "https://api.example.test/garmops/payments/payu/callback",
+    })
   })
   it("does not authorize a session before a verified server event", async () => {
     const provider = new PayuPaymentProvider({}, { key: "merchant", salt: "secret" })
