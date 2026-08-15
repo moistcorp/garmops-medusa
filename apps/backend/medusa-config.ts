@@ -55,7 +55,7 @@ module.exports = defineConfig({
         providers: [
           { resolve: '@medusajs/medusa/auth-emailpass', id: 'emailpass' },
           { resolve: './src/providers/email-otp', id: 'emailotp' },
-          { resolve: '@medusajs/medusa/auth-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || 'not-configured', clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'not-configured', callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:9000/auth/customer/google/callback' } },
+          { resolve: '@medusajs/medusa/auth-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || 'not-configured', clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'not-configured', callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/callback' } },
         ],
       },
     },
