@@ -1,0 +1,246 @@
+name: garmops-portable
+
+x-backend-environment: &backend-environment
+  NODE_ENV: production
+  PORT: 9000
+  DATABASE_URL: postgresql://${POSTGRES_USER:-garmops}:${POSTGRES_PASSWORD:-garmops-local-only}@postgres:5432/${POSTGRES_DB:-garmops}
+  DATABASE_SSL_MODE: ${DATABASE_SSL_MODE:-disable}
+  REDIS_URL: redis://redis:6379/0
+  CACHE_REDIS_URL: redis://redis:6379/1
+  LOCKING_REDIS_URL: redis://redis:6379/2
+  JWT_SECRET: ${JWT_SECRET:-local-jwt-secret-change-before-exposing}
+  COOKIE_SECRET: ${COOKIE_SECRET:-local-cookie-secret-change-before-exposing}
+  AUTH_MFA_ENCRYPTION_KEY: ${AUTH_MFA_ENCRYPTION_KEY:-local-mfa-secret-change-before-exposing}
+  STORE_CORS: ${STORE_CORS:-http://localhost:3000,http://localhost:3001,http://localhost:9000}
+  ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9000}
+  AUTH_CORS: ${AUTH_CORS:-http://localhost:3000,http://localhost:3001,http://localhost:9000}
+  MEDUSA_BACKEND_URL: ${MEDUSA_PUBLIC_URL:-http://localhost:9000}
+  MEDUSA_PUBLISHABLE_API_KEY_FILE: /run/garmops/publishable-api-key
+  PAYU_ENV: ${PAYU_ENV:-test}
+  PAYU_KEY: ${PAYU_KEY:-}
+  PAYU_SALT: ${PAYU_SALT:-}
+  PAYU_CALLBACK_URL: ${PAYU_CALLBACK_URL:-http://localhost:9000/garmops/payments/payu/callback}
+  R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+  R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+  R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+  R2_S3_ENDPOINT: ${R2_S3_ENDPOINT:-}
+  R2_PRIVATE_BUCKET: ${R2_PRIVATE_BUCKET:-}
+  R2_PUBLIC_BUCKET: ${R2_PUBLIC_BUCKET:-}
+  R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+  MALWARE_SCANNER_HOST: malware-scanner
+  MALWARE_SCANNER_PORT: 3310
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  RESEND_FROM: ${RESEND_FROM:-Garmops <noreply@example.com>}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+  GOOGLE_CALLBACK_URL: ${GOOGLE_CALLBACK_URL:-http://localhost:9000/auth/customer/google/callback}
+  INVOICE_SELLER_NAME: ${INVOICE_SELLER_NAME:-Garmops}
+  INVOICE_SELLER_GSTIN: ${INVOICE_SELLER_GSTIN:-}
+  INVOICE_SELLER_ADDRESS: ${INVOICE_SELLER_ADDRESS:-}
+  INVOICE_SELLER_STATE: ${INVOICE_SELLER_STATE:-}
+  INVOICE_SELLER_PIN: ${INVOICE_SELLER_PIN:-}
+
+x-frontend-environment: &frontend-environment
+  APP_ENV: ${APP_ENV:-development}
+  APP_TIMEZONE: Asia/Kolkata
+  NEXT_PUBLIC_CUSTOMER_APP_URL: ${CUSTOMER_APP_URL:-http://localhost:3000}
+  NEXT_PUBLIC_STAFF_APP_URL: ${STAFF_APP_URL:-http://localhost:3001}
+  NEXT_PUBLIC_MEDUSA_BACKEND_URL: http://medusa-server:9000
+  MEDUSA_PUBLISHABLE_API_KEY_FILE: /run/garmops/publishable-api-key
+  NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+  POSTHOG_ENABLED: "false"
+  NEXT_PUBLIC_ANALYTICS_ENABLED: "false"
+  SENTRY_ENABLED: "false"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-garmops}
+      POSTGRES_USER: ${POSTGRES_USER:-garmops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-garmops-local-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-garmops} -d ${POSTGRES_DB:-garmops}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [stack]
+
+  redis:
+    image: redis:7.4.5-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [stack]
+
+  malware-scanner:
+    image: clamav/clamav:stable-debian
+    restart: unless-stopped
+    expose: ["3310"]
+    volumes:
+      - clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 /etc/hosts >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks: [stack]
+
+  bootstrap:
+    image: garmops-medusa-bootstrap:local
+    build:
+      context: .
+      target: development
+    environment: *backend-environment
+    command:
+      - /bin/sh
+      - -ec
+      - npm run db:migrate --workspace @garmops/backend && npm run seed:garmops --workspace @garmops/backend && npm run setup:publishable-key --workspace @garmops/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      malware-scanner:
+        condition: service_healthy
+    volumes:
+      - runtime_config:/run/garmops
+    networks: [stack]
+    restart: "no"
+
+  medusa-server:
+    image: garmops-medusa-portable:local
+    build:
+      context: .
+      target: production
+    restart: unless-stopped
+    environment:
+      <<: *backend-environment
+      MEDUSA_WORKER_MODE: server
+      DISABLE_MEDUSA_ADMIN: "false"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${MEDUSA_PORT:-9000}:9000"
+    volumes:
+      - runtime_config:/run/garmops:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9000/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 2m
+    networks: [stack]
+
+  medusa-worker:
+    image: garmops-medusa-portable:local
+    pull_policy: never
+    restart: unless-stopped
+    environment:
+      <<: *backend-environment
+      MEDUSA_WORKER_MODE: worker
+      DISABLE_MEDUSA_ADMIN: "true"
+    depends_on:
+      medusa-server:
+        condition: service_healthy
+    volumes:
+      - runtime_config:/run/garmops:ro
+    networks: [stack]
+
+  customer:
+    build:
+      context: ../garmops
+      args:
+        APP_SURFACE: customer
+        APP_URL: ${CUSTOMER_APP_URL:-http://localhost:3000}
+        CUSTOMER_APP_URL: ${CUSTOMER_APP_URL:-http://localhost:3000}
+        STAFF_APP_URL: ${STAFF_APP_URL:-http://localhost:3001}
+        ACCOUNTS_ENABLED: "true"
+        CLOUD_DESIGNS_ENABLED: "true"
+    restart: unless-stopped
+    environment:
+      <<: *frontend-environment
+      APP_SURFACE: customer
+      NEXT_PUBLIC_APP_SURFACE: customer
+      NEXT_PUBLIC_APP_URL: ${CUSTOMER_APP_URL:-http://localhost:3000}
+      NEXT_PUBLIC_ACCOUNTS_ENABLED: "true"
+      NEXT_PUBLIC_CLOUD_DESIGNS_ENABLED: "true"
+      STAFF_PORTAL_ENABLED: "false"
+      CLOUD_DESIGNS_ENABLED: "true"
+      CONFIGURATOR_CHECKOUT_ENABLED: "true"
+      SAMPLE_CHECKOUT_ENABLED: "true"
+    depends_on:
+      medusa-server:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${CUSTOMER_PORT:-3000}:3000"
+    volumes:
+      - runtime_config:/run/garmops:ro
+    networks: [stack]
+
+  foundry:
+    build:
+      context: ../garmops
+      args:
+        APP_SURFACE: staff
+        APP_URL: ${STAFF_APP_URL:-http://localhost:3001}
+        CUSTOMER_APP_URL: ${CUSTOMER_APP_URL:-http://localhost:3000}
+        STAFF_APP_URL: ${STAFF_APP_URL:-http://localhost:3001}
+        ACCOUNTS_ENABLED: "false"
+        CLOUD_DESIGNS_ENABLED: "false"
+    restart: unless-stopped
+    environment:
+      <<: *frontend-environment
+      APP_SURFACE: staff
+      NEXT_PUBLIC_APP_SURFACE: staff
+      NEXT_PUBLIC_APP_URL: ${STAFF_APP_URL:-http://localhost:3001}
+      NEXT_PUBLIC_ACCOUNTS_ENABLED: "false"
+      NEXT_PUBLIC_CLOUD_DESIGNS_ENABLED: "false"
+      STAFF_PORTAL_ENABLED: "true"
+      CLOUD_DESIGNS_ENABLED: "false"
+      CONFIGURATOR_CHECKOUT_ENABLED: "false"
+      SAMPLE_CHECKOUT_ENABLED: "false"
+    depends_on:
+      medusa-server:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${STAFF_PORT:-3001}:3000"
+    volumes:
+      - runtime_config:/run/garmops:ro
+    networks: [stack]
+
+  # Linux/Hyper-V only. Enable with PORTABLE_WITH_TUNNEL=1 after copying the
+  # locally-managed tunnel config and credentials into CLOUDFLARE_CONFIG_DIR.
+  # Host networking lets an existing `url: http://127.0.0.1:9000` config work
+  # unchanged apart from its credentials-file path inside the container.
+  cloudflared:
+    profiles: [tunnel]
+    image: cloudflare/cloudflared:2026.7.2
+    restart: unless-stopped
+    network_mode: host
+    command: ["--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "tunnel", "run"]
+    volumes:
+      - ${CLOUDFLARE_CONFIG_DIR:-./cloudflare}:/etc/cloudflared:ro
+    depends_on:
+      medusa-server:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  clamav_data:
+  runtime_config:
+
+networks:
+  stack:

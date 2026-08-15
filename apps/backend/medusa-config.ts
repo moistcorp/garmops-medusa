@@ -3,9 +3,17 @@ import { GARMOPS_MODULE } from './src/modules/garmops'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
 
+const databaseSslMode = process.env.DATABASE_SSL_MODE?.trim().toLowerCase()
+const databaseDriverOptions = databaseSslMode === 'disable'
+  ? { connection: { ssl: false } }
+  : databaseSslMode === 'require'
+    ? { connection: { ssl: { rejectUnauthorized: false } } }
+    : undefined
+
 module.exports = defineConfig({
   projectConfig: {
     databaseUrl: process.env.DATABASE_URL,
+    ...(databaseDriverOptions ? { databaseDriverOptions } : {}),
     redisUrl: process.env.REDIS_URL,
     workerMode:
       (process.env.MEDUSA_WORKER_MODE as 'shared' | 'server' | 'worker') ||

@@ -35,10 +35,13 @@ yarn-error.log*
 
 # Local env files
 .env
+.env.portable
 .env.*
 !.env.example
+!.env.portable.example
 **/.env.*
 !.env.example
+!.env.portable.example
 **/.env
 **/.env.local
 **/.env.development.local
@@ -61,3 +64,7 @@ yarn-error.log*
 ehthumbs.db
 Thumbs.db
 **/.DS_Store
+
+# Locally-managed Cloudflare Tunnel credentials
+cloudflare/*
+!cloudflare/config.example.yml

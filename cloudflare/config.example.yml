@@ -1,0 +1,5 @@
+# Copy this file to config.yml and copy the named tunnel's credential JSON into
+# the same directory. Never commit either file.
+tunnel: replace-with-tunnel-id
+credentials-file: /etc/cloudflared/replace-with-tunnel-id.json
+url: http://127.0.0.1:9000

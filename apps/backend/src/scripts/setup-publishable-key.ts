@@ -1,11 +1,14 @@
 import { linkSalesChannelsToApiKeyWorkflow } from "@medusajs/core-flows"
 import type { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys, MedusaError, Modules } from "@medusajs/framework/utils"
+import { access, mkdir, rename, writeFile } from "node:fs/promises"
+import { dirname } from "node:path"
 
 const KEY_TITLE = "Garmops Storefront — Local Development"
 const SALES_CHANNEL_NAME = "Default Sales Channel"
 
 export default async function setupPublishableKey({ container }: ExecArgs) {
+  const outputFile = process.env.MEDUSA_PUBLISHABLE_API_KEY_FILE?.trim()
   const salesChannelService = container.resolve(Modules.SALES_CHANNEL)
   const channels = await salesChannelService.listSalesChannels({ name: SALES_CHANNEL_NAME })
   if (channels.length !== 1) throw new MedusaError(MedusaError.Types.INVALID_DATA, `Expected exactly one ${SALES_CHANNEL_NAME}; found ${channels.length}`)
@@ -18,6 +21,24 @@ export default async function setupPublishableKey({ container }: ExecArgs) {
   const key = existingKeys[0] ?? await apiKeyService.createApiKeys({ title: KEY_TITLE, type: "publishable", created_by: "garmops-local-bootstrap" })
   const created = !existingKeys[0]
 
+  if (outputFile) {
+    if (created) {
+      await mkdir(dirname(outputFile), { recursive: true })
+      const temporaryFile = `${outputFile}.tmp`
+      await writeFile(temporaryFile, `${key.token}\n`, { mode: 0o644 })
+      await rename(temporaryFile, outputFile)
+    } else {
+      try {
+        await access(outputFile)
+      } catch {
+        throw new MedusaError(
+          MedusaError.Types.INVALID_DATA,
+          `The existing publishable key cannot be recovered, and ${outputFile} is missing. Reuse its recorded token or create a new publishable key.`,
+        )
+      }
+    }
+  }
+
   const remoteQuery = container.resolve(ContainerRegistrationKeys.REMOTE_QUERY)
   const linkedResult = await remoteQuery({ entryPoint: "api_key", variables: { filters: { id: key.id } }, fields: ["id", "sales_channels.id"] })
   const linked = linkedResult[0]?.sales_channels ?? []
@@ -29,6 +50,7 @@ export default async function setupPublishableKey({ container }: ExecArgs) {
   console.log(`Publishable key ${created ? "created" : "reused"}: ${key.redacted}`)
   console.log(`Sales channel: ${salesChannel.name} (${salesChannel.id})`)
   console.log(`Sales-channel association: ${add.length || remove.length ? "updated" : "already correct"}`)
-  if (created) console.log(`PUBLISHABLE_API_KEY=${key.token}`)
+  if (created && outputFile) console.log(`Publishable key written to ${outputFile}`)
+  else if (created) console.log(`PUBLISHABLE_API_KEY=${key.token}`)
   else console.log("Existing key token is not recoverable through Medusa after creation; reuse the previously recorded local token.")
 }
