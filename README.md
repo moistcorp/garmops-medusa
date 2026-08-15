@@ -93,19 +93,21 @@ putting the stack behind Cloudflare Tunnel, update `.env.portable` with HTTPS
 application/API origins, matching CORS origins, strong external-service
 credentials, and the real callback URLs; then rebuild the stack.
 
-### Hyper-V Ubuntu and the existing Cloudflare Tunnel
+### Hyper-V Ubuntu and Dockerized Cloudflare Tunnel
 
-Keep both repositories beside one another on the Ubuntu VM. Copy the existing
-Mac tunnel `config.yml` and its credential JSON into
-`garmops-medusa/cloudflare/`; change `credentials-file` in the copied config to
-`/etc/cloudflared/<tunnel-id>.json`. The existing
-`url: http://127.0.0.1:9000` remains valid because the tunnel container uses
-Linux host networking. Then start everything, including the tunnel, with:
+Import the existing locally managed tunnel on the Mac once:
 
 ```bash
-PORTABLE_WITH_TUNNEL=1 ./scripts/portable-up.sh
+./scripts/portable-tunnel-import.sh
+./scripts/portable-up.sh
 ./scripts/portable-smoke.sh
 ```
+
+When `cloudflare/config.yml` exists, the startup script automatically starts
+Cloudflared in Docker. Its origin is the Compose service
+`http://medusa-server:9000`, so the same files work on macOS and Ubuntu without
+an IP change. Set `PORTABLE_WITH_TUNNEL=0` only when intentionally starting the
+stack without its public tunnel.
 
 Transfer the ignored backend `.env` and frontend `.env.local` through a secure
 channel before the first Ubuntu startup, or put their required Neon URL and
@@ -117,11 +119,10 @@ and callback values in `.env.portable` to the Ubuntu VM's stable IP. Keep the
 Windows/Ubuntu firewalls limited to the private Hyper-V network. The safer
 default binds all three HTTP ports to the VM's own loopback interface.
 
-The tunnel is optional on the Mac, where the existing host `cloudflared`
-process can continue using port 9000. On Ubuntu, enable Docker at boot once
-with `sudo systemctl enable --now docker`; every long-running service uses a
-restart policy, so subsequent VM boots do not require starting Node, Medusa,
-PostgreSQL, Redis, or Cloudflare separately.
+For the complete VM procedure, including secure file transfer, verification,
+cutover, and rollback, follow [Hyper-V Ubuntu deployment](docs/hyperv-ubuntu-deployment.md).
+On Ubuntu, every long-running service uses a restart policy, so subsequent VM
+boots do not require starting Node, Medusa, Redis, or Cloudflare separately.
 
 ## Medusa Admin and admin user
 

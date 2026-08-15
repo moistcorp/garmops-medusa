@@ -19,7 +19,7 @@
     "docker:logs": "docker compose logs -f",
     "portable:up": "./scripts/portable-up.sh",
     "portable:smoke": "./scripts/portable-smoke.sh",
-    "portable:down": "./scripts/portable-compose.sh down --remove-orphans",
+    "portable:down": "./scripts/portable-compose.sh --profile tunnel down --remove-orphans",
     "db:migrate": "docker compose exec medusa npm run db:migrate --workspace @garmops/backend",
     "db:generate": "npm run db:generate --workspace @garmops/backend --",
     "catalog:bootstrap": "npm run seed:garmops --workspace @garmops/backend",

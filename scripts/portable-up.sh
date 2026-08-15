@@ -67,15 +67,24 @@ if ! has_environment_value MEDUSA_PUBLISHABLE_API_KEY; then
   exit 1
 fi
 
-if [[ "${PORTABLE_WITH_TUNNEL:-0}" == "1" ]]; then
-  cloudflare_dir="${CLOUDFLARE_CONFIG_DIR:-${repository_dir}/cloudflare}"
-  if [[ ! -f "${cloudflare_dir}/config.yml" ]]; then
-    echo "Tunnel requested, but ${cloudflare_dir}/config.yml does not exist." >&2
-    echo "Copy config.example.yml to config.yml and add the tunnel credential JSON first." >&2
-    exit 1
-  fi
+cloudflare_dir="${CLOUDFLARE_CONFIG_DIR:-${repository_dir}/cloudflare}"
+tunnel_mode="${PORTABLE_WITH_TUNNEL:-auto}"
+
+if [[ "${tunnel_mode}" != "auto" && "${tunnel_mode}" != "0" && "${tunnel_mode}" != "1" ]]; then
+  echo "PORTABLE_WITH_TUNNEL must be auto, 0, or 1." >&2
+  exit 1
+fi
+
+if [[ "${tunnel_mode}" == "1" && ! -f "${cloudflare_dir}/config.yml" ]]; then
+  echo "Tunnel requested, but ${cloudflare_dir}/config.yml does not exist." >&2
+  echo "Run ./scripts/portable-tunnel-import.sh or install the tunnel files first." >&2
+  exit 1
+fi
+
+if [[ "${tunnel_mode}" == "1" || ( "${tunnel_mode}" == "auto" && -f "${cloudflare_dir}/config.yml" ) ]]; then
   export CLOUDFLARE_CONFIG_DIR="${cloudflare_dir}"
   compose+=(--profile tunnel)
+  echo "Cloudflare Tunnel enabled from ${cloudflare_dir}."
 fi
 
 "${compose[@]}" up --build -d --wait

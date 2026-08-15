@@ -42,4 +42,13 @@ compose+=(-f "${compose_file}")
   }
   console.log(`Catalog OK: ${catalog.products.length} products (${catalog.currencyCode})`)
 '
+
+if [[ -f "${repository_dir}/cloudflare/config.yml" ]]; then
+  if ! "${compose[@]}" --profile tunnel ps --status running --services | grep -qx cloudflared; then
+    echo "Cloudflare tunnel config exists, but its container is not running." >&2
+    exit 1
+  fi
+  echo "Cloudflare Tunnel container is running."
+fi
+
 echo "Customer, Foundry, Medusa, and catalog smoke checks passed."

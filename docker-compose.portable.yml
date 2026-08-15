@@ -191,21 +191,19 @@ services:
       - "${BIND_ADDRESS:-127.0.0.1}:${STAFF_PORT:-3001}:3000"
     networks: [stack]
 
-  # Linux/Hyper-V only. Enable with PORTABLE_WITH_TUNNEL=1 after copying the
-  # locally-managed tunnel config and credentials into CLOUDFLARE_CONFIG_DIR.
-  # Host networking lets an existing `url: http://127.0.0.1:9000` config work
-  # unchanged apart from its credentials-file path inside the container.
+  # Starts automatically when cloudflare/config.yml exists. The tunnel joins
+  # the stack network, so this works the same way in Docker Desktop and Linux.
   cloudflared:
     profiles: [tunnel]
     image: cloudflare/cloudflared:2026.7.2
     restart: unless-stopped
-    network_mode: host
     command: ["--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "tunnel", "run"]
     volumes:
       - ${CLOUDFLARE_CONFIG_DIR:-./cloudflare}:/etc/cloudflared:ro
     depends_on:
       medusa-server:
         condition: service_healthy
+    networks: [stack]
 
 volumes:
   redis_data:
