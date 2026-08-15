@@ -509,8 +509,8 @@ runtime: isolated Redis sentinel survived restart; ClamAV TCP PING and
 ```
 
 This run closed the browser harness contamination and authenticated-CTA race:
-visual fixtures reject analytics consent, Next runs in development mode with
-diagnostics disabled for the harness, photographic canvas tests wait for an
+Next runs in development mode with diagnostics disabled for the harness,
+photographic canvas tests wait for an
 explicit render-ready marker, and the configurator refreshes a still-loading
 customer session before opening an authentication dialog. Test doubles,
 failure injection, R2, Resend, PayU refund doubles, and malware overrides now

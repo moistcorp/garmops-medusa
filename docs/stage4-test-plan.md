@@ -231,8 +231,8 @@ The final isolated verification run completed these gates:
 - ClamAV TCP `PING` and `INSTREAM` clean scan: PASS.
 
 The browser harness now supports `E2E_UPDATE_SNAPSHOTS=true`, skips customer
-execution for `E2E_ONLY_STAFF=true`, rejects analytics consent deterministically,
-and waits for an explicit photographic canvas render-ready state. These are
+execution for `E2E_ONLY_STAFF=true`, and waits for an explicit photographic
+canvas render-ready state. These are
 test isolation controls; they do not enable live services or PayU.
 
 The following remain intentionally unclaimed because they require production

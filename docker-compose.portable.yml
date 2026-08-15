@@ -48,8 +48,6 @@ x-frontend-environment: &frontend-environment
   MEDUSA_PUBLISHABLE_API_KEY: ${MEDUSA_PUBLISHABLE_API_KEY:?Set the Neon-linked Medusa publishable key}
   NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
   TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
-  POSTHOG_ENABLED: "false"
-  NEXT_PUBLIC_ANALYTICS_ENABLED: "false"
   SENTRY_ENABLED: "false"
 
 services:
