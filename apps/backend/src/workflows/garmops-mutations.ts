@@ -57,16 +57,36 @@ const verifyOtpStep = createStep("verify-otp", async (input: { challengeId: stri
 
 export const verifyGarmopsOtpWorkflow = createWorkflow("verify-garmops-otp", (input: Parameters<typeof verifyOtpStep>[0]) => new WorkflowResponse(verifyOtpStep(input)))
 
-const reviewArtworkStep = createStep("review-artwork", async (input: { fileId: string; decision: "approve" | "reject"; actorId: string; requestId?: string }, { container }) => {
+const reviewArtworkStep = createStep("review-artwork", async (input: { fileId: string; decision: "approve" | "reject"; actorId: string; requestId?: string; productionJobId?: string }, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
   const file = input.decision === "approve"
     ? await approveStoredFile(container, input.fileId)
     : await service.updateStoredFiles({ id: input.fileId, state: "rejected", metadata: { reviewStatus: "rejected", reviewedAt: new Date().toISOString() } })
   await service.createAuditLogs({ actor_type: "staff", actor_id: input.actorId, action: `artwork_${input.decision}`, resource_type: "stored_file", resource_id: input.fileId, request_id: input.requestId ?? null, before_snapshot: null, after_snapshot: { reviewStatus: input.decision === "approve" ? "approved" : "rejected" }, metadata: null })
+  if (input.productionJobId) {
+    const job = await service.retrieveProductionJob(input.productionJobId)
+    if (input.decision === "approve") {
+      if (!["payment_confirmed", "order_review", "artwork_pending"].includes(job.status)) throw new MedusaError(MedusaError.Types.CONFLICT, "Artwork cannot be approved at the current production stage")
+      await service.updateProductionJobs({ id: job.id, status: "artwork_approved", artwork_review_status: "approved" })
+      await service.createProductionStatusHistories({ production_job_id: job.id, from_status: job.status, to_status: "artwork_approved", actor_id: input.actorId, request_id: input.requestId ?? null, reason: "Dedicated artwork approval" })
+    } else {
+      await service.updateProductionJobs({ id: job.id, artwork_review_status: "rejected" })
+    }
+  }
   return new StepResponse(file)
 })
 
 export const reviewGarmopsArtworkWorkflow = createWorkflow("review-garmops-artwork", (input: Parameters<typeof reviewArtworkStep>[0]) => new WorkflowResponse(reviewArtworkStep(input)))
+
+const setTrackingStep = createStep("set-tracking", async (input: { jobId: string; trackingNumber: string; trackingUrl?: string | null; actorId: string; requestId?: string }, { container }) => {
+  const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
+  const job = await service.retrieveProductionJob(input.jobId)
+  const updated = await service.updateProductionJobs({ id: job.id, tracking_number: input.trackingNumber, tracking_url: input.trackingUrl ?? null })
+  await service.createAuditLogs({ actor_type: "staff", actor_id: input.actorId, action: "tracking_updated", resource_type: "production_job", resource_id: job.id, request_id: input.requestId ?? null, before_snapshot: { trackingNumber: job.tracking_number, trackingUrl: job.tracking_url }, after_snapshot: { trackingNumber: input.trackingNumber, trackingUrl: input.trackingUrl ?? null }, metadata: null })
+  return new StepResponse(updated)
+})
+
+export const setGarmopsTrackingWorkflow = createWorkflow("set-garmops-tracking", (input: Parameters<typeof setTrackingStep>[0]) => new WorkflowResponse(setTrackingStep(input)))
 
 export function isWorkflowConflict(error: unknown): boolean {
   return error instanceof MedusaError && [MedusaError.Types.CONFLICT, MedusaError.Types.DUPLICATE_ERROR].includes(error.type)

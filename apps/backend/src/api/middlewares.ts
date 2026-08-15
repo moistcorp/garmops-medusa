@@ -22,6 +22,7 @@ export default defineMiddlewares({
     { matcher: "/store/garmops/cart-profile", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/cart-lines*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/sample-cart*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
+    { matcher: "/store/garmops/sample-checkout", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/checkout*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/orders*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/invoices*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },

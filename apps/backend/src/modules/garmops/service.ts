@@ -1,11 +1,11 @@
 import { MedusaError, MedusaService } from "@medusajs/framework/utils"
 import {
-  AuditLog, CartProfile, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, InvoiceNumberCounter, NotificationEvent, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentEvent, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, StoredFile, TermsAcceptance,
+  AuditLog, CartProfile, CheckoutIdempotency, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, InvoiceNumberCounter, NotificationEvent, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentEvent, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, StoredFile, TermsAcceptance,
 } from "./models/models"
 import { createHash, randomInt, timingSafeEqual } from "node:crypto"
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../domain/production"
 
-class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
+class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, CheckoutIdempotency, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
   updateOrderConfigurationSnapshots = async (): Promise<never> => {
     throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Order configuration snapshots are immutable")
   }

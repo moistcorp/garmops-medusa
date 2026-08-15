@@ -11,4 +11,10 @@ describe("production controls", () => {
     expect(can("operations", "manage_refunds")).toBe(false)
     expect(can("founder", "manage_refunds")).toBe(true)
   })
+
+  it("keeps financial and artwork approval states out of generic production transitions", () => {
+    expect(ORDER_TRANSITIONS.order_review).not.toContain("artwork_approved")
+    expect(ORDER_TRANSITIONS.artwork_pending).not.toContain("artwork_approved")
+    expect(ORDER_TRANSITIONS.cancelled).toContain("refund_pending")
+  })
 })

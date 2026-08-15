@@ -1,5 +1,5 @@
 import { MedusaError, Modules } from "@medusajs/framework/utils"
-import type { ILockingModule, INotificationModuleService, IOrderModuleService, MedusaContainer } from "@medusajs/framework/types"
+import type { ICartModuleService, ILockingModule, INotificationModuleService, IOrderModuleService, MedusaContainer } from "@medusajs/framework/types"
 import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 import { completePayuOrderWorkflow } from "../workflows/complete-payu-order"
@@ -8,6 +8,7 @@ import { renderInvoicePdf, type InvoiceData } from "../domain/invoice"
 import { putPrivateObject } from "../integrations/r2"
 import { randomUUID } from "node:crypto"
 import { injectTestFailure } from "../integrations/test-failures"
+import { normalizeRequestedDeliveryDate } from "./garmops-cart"
 
 type AddressLike = { first_name?: string; last_name?: string; company?: string; address_1?: string; address_2?: string; city?: string; postal_code?: string; province?: string; state?: string; metadata?: Record<string, unknown> }
 type Container = MedusaContainer
@@ -24,11 +25,15 @@ async function ensureOrderArtifacts(container: Container, input: { orderId: stri
   const order = await orderService.retrieveOrder(input.orderId, { relations: ["items", "billing_address", "shipping_address"] })
   const profile = (await service.listCartProfiles({ cart_id: input.cartId }))[0]
   if (!profile) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Cart profile is missing")
+  const cart = await container.resolve<ICartModuleService>(Modules.CART).retrieveCart(input.cartId)
+  const checkoutMetadata = (cart.metadata?.garmops_checkout ?? {}) as Record<string, unknown>
+  const requestedDeliveryDate = normalizeRequestedDeliveryDate(checkoutMetadata.requestedDeliveryDate)
   const orderType = profile.cart_type
   const existingJob = (await service.listProductionJobs({ order_id: order.id }))[0]
   const locking = container.resolve<ILockingModule>(Modules.LOCKING)
   const orderNumber = existingJob?.order_number ?? await locking.execute(`order-number:${orderType}:${new Date().getUTCFullYear()}`, () => service.issueOrderNumber(orderType), { timeout: 30 })
-  if (!existingJob) await service.createProductionJobs({ order_id: order.id, order_number: orderNumber, order_type: orderType, status: "payment_confirmed", hold_from_status: null, requested_delivery_date: null, artwork_review_status: "pending", tracking_number: null, tracking_url: null, metadata: { paymentTransactionId: input.providerTransactionId } })
+  if (!existingJob) await service.createProductionJobs({ order_id: order.id, order_number: orderNumber, order_type: orderType, status: "payment_confirmed", hold_from_status: null, requested_delivery_date: requestedDeliveryDate ?? null, artwork_review_status: "pending", tracking_number: null, tracking_url: null, metadata: { paymentTransactionId: input.providerTransactionId } })
+  else if (!existingJob.requested_delivery_date && requestedDeliveryDate) await service.updateProductionJobs({ id: existingJob.id, requested_delivery_date: requestedDeliveryDate })
   if (!order.metadata?.garmops_order_number) await orderService.updateOrders([{ id: order.id, metadata: { ...(order.metadata ?? {}), garmops_order_number: orderNumber, garmops_order_type: orderType } }])
 
   const lines = await service.listConfiguredCartLines({ cart_id: input.cartId }, { order: { created_at: "ASC" } })
@@ -36,7 +41,7 @@ async function ensureOrderArtifacts(container: Container, input: { orderId: stri
   if (snapshots.length === 0 && lines.length > 0) {
     for (const [index, line] of lines.entries()) {
       const version = await service.retrieveDesignVersion(line.version_id)
-      await service.createImmutableSnapshot({ orderId: order.id, productSlug: line.product_slug, quantity: line.quantity, sizeBreakdown: line.size_breakdown as Record<string, number>, snapshot: { configuration: version.configuration, deliveryType: line.delivery_type, versionRevision: version.revision }, pricingSnapshot: (line.pricing_snapshot ?? {}) as Record<string, unknown>, lineItemId: line.line_item_id ?? undefined, lineNumber: index + 1, customerId: line.customer_id ?? undefined, projectId: line.project_id, versionId: line.version_id })
+      await service.createImmutableSnapshot({ orderId: order.id, productSlug: line.product_slug, quantity: line.quantity, sizeBreakdown: line.size_breakdown as Record<string, number>, snapshot: { configuration: version.configuration, deliveryType: line.delivery_type, requestedDeliveryDate, versionRevision: version.revision }, pricingSnapshot: (line.pricing_snapshot ?? {}) as Record<string, unknown>, lineItemId: line.line_item_id ?? undefined, lineNumber: index + 1, customerId: line.customer_id ?? undefined, projectId: line.project_id, versionId: line.version_id })
     }
   }
   const finalSnapshots = await service.listOrderConfigurationSnapshots({ order_id: order.id })

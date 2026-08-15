@@ -44,6 +44,10 @@ export const RefundRequest = model.define("refund_request", {
   id: model.id().primaryKey(), payment_id: model.text().index(), idempotency_key: model.text().unique(), amount_paise: model.bigNumber(), status: model.enum(["pending", "submitted", "failed"] as const).default("pending"), requested_by: model.text(), provider_reference: model.text().nullable(), last_error: model.text().nullable(),
 })
 
+export const CheckoutIdempotency = model.define("checkout_idempotency", {
+  id: model.id().primaryKey(), key: model.text().unique(), customer_id: model.text().index(), request_fingerprint: model.text(), cart_id: model.text(), status: model.enum(["prepared", "failed"] as const).default("prepared"), result: model.json().nullable(), expires_at: model.dateTime().nullable(),
+})
+
 export const Invoice = model.define("gst_invoice", {
   id: model.id().primaryKey(), order_id: model.text().unique(), order_number: model.text(), invoice_number: model.text().unique(), status: model.enum(["pending", "issued", "failed", "void"] as const).default("pending"), subtotal_paise: model.bigNumber(), tax_paise: model.bigNumber(), total_paise: model.bigNumber(), cgst_paise: model.number().default(0), sgst_paise: model.number().default(0), igst_paise: model.number().default(0), gst_rate_basis_points: model.number(), place_of_supply: model.text(), hsn_snapshot: model.json(), seller_snapshot: model.json(), billing_snapshot: model.json(), shipping_snapshot: model.json().nullable(), payment_snapshot: model.json().nullable(), pdf_file_id: model.text().nullable(), issued_at: model.dateTime().nullable(), last_error: model.text().nullable(),
 })

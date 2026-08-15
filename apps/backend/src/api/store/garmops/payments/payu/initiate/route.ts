@@ -2,6 +2,7 @@ import type { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/frame
 import type { ICartModuleService } from "@medusajs/framework/types"
 import { Modules } from "@medusajs/framework/utils"
 import { MedusaError } from "@medusajs/framework/utils"
+import { createHash } from "node:crypto"
 import { GARMOPS_MODULE } from "../../../../../../modules/garmops"
 import type GarmopsModuleService from "../../../../../../modules/garmops/service"
 import { findCatalogProduct } from "../../../../../../domain/catalog"
@@ -19,6 +20,13 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     const service = req.scope.resolve<GarmopsModuleService>(GARMOPS_MODULE)
     const profile = (await service.listCartProfiles({ cart_id: cartId }))[0]
     if (!profile || profile.customer_id !== actorId) return res.status(409).json({ code: "CART_PROFILE_INVALID", message: "Cart ownership or type is invalid", requestId: req.requestId })
+    const existingAttempt = asRecord(cart.metadata?.garmops_payment_attempt)
+    if (existingAttempt.status === "active" && Date.parse(String(existingAttempt.expiresAt ?? "")) > Date.now()) {
+      const sessionId = String(existingAttempt.paymentSessionId ?? "")
+      if (!sessionId) return res.status(409).json({ code: "PAYMENT_ATTEMPT_ACTIVE", message: "A payment attempt is already active for this cart", requestId: req.requestId })
+      const existingSession = await req.scope.resolve<any>(Modules.PAYMENT).retrievePaymentSession(sessionId)
+      return res.status(201).json({ paymentCollectionId: existingSession.payment_collection_id, paymentSession: existingSession, amountPaise: Number(existingAttempt.expectedAmountPaise), requestId: req.requestId })
+    }
     const lines = await service.listConfiguredCartLines({ cart_id: cartId })
     let authoritativeTotal = 0
     if (profile.cart_type === "configured") {
@@ -40,10 +48,22 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     }
     if (Number(cart.total) !== authoritativeTotal) throw new MedusaError(MedusaError.Types.CONFLICT, "Cart total is stale; refresh the cart before payment")
     const { result } = await initiatePayuPaymentWorkflow(req.scope).run({ input: { cartId, customerId: actorId, amountPaise: authoritativeTotal, data: { cart_id: cartId, cart_type: profile.cart_type, productinfo: `Garmops ${profile.cart_type} order`, email: cart.email ?? "" } } })
+    const session = (Array.isArray(result.session) ? result.session[0] : result.session) as Record<string, unknown>
+    const sessionData = (session?.data ?? {}) as Record<string, unknown>
+    const sessionFields = (sessionData.fields ?? {}) as Record<string, unknown>
+    const providerTransactionId = String(sessionData.txnid ?? sessionFields.txnid ?? "")
+    if (!providerTransactionId || !session?.id) throw new MedusaError(MedusaError.Types.CONFLICT, "PayU did not return a payment transaction")
+    const revisionHash = createHash("sha256").update(JSON.stringify({ cartId, authoritativeTotal, lines: lines.map((line) => ({ id: line.id, versionId: line.version_id, quantity: line.quantity, sizes: line.size_breakdown, pricing: line.pricing_snapshot })), checkout: cart.metadata?.garmops_checkout ?? null })).digest("hex")
+    await service.recordPaymentEvent({ providerEventId: `payu-init-${providerTransactionId}`, providerTransactionId, paymentSessionId: String(session.id), cartId, eventType: "initiated", status: "initiated", amountPaise: authoritativeTotal, payloadHash: revisionHash })
+    await cartService.updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { providerTransactionId, paymentSessionId: String(session.id), cartId, customerId: actorId, expectedAmountPaise: authoritativeTotal, revisionHash, status: "active", expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() } } })
     res.status(201).json({ paymentCollectionId: result.collectionId, paymentSession: result.session, amountPaise: authoritativeTotal, requestId: req.requestId })
   } catch (error) {
     res.status(400).json({ code: "PAYMENT_INITIATION_FAILED", message: error instanceof Error ? error.message : "Payment could not be initiated", requestId: req.requestId })
   }
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 
 function referencedFileIds(configuration: Record<string, unknown>): string[] {

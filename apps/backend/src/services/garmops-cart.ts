@@ -62,6 +62,11 @@ export async function ownedCart(scope: Scope, cartId: string, customerId: string
 
 function assertCartMutable(cart: { completed_at?: Date | string | null }): void {
   if (cart.completed_at) throw new MedusaError(MedusaError.Types.CONFLICT, "Completed carts are immutable")
+  const attempt = asRecord((cart as { metadata?: unknown }).metadata).garmops_payment_attempt
+  if (asRecord(attempt).status === "active") {
+    const expiresAt = Date.parse(String(asRecord(attempt).expiresAt ?? ""))
+    if (!Number.isFinite(expiresAt) || expiresAt > Date.now()) throw new MedusaError(MedusaError.Types.CONFLICT, "Cart is locked while a payment attempt is active")
+  }
 }
 
 export async function createCustomerCart(scope: Scope, customerId: string, cartType: "configured" | "sample", email?: string) {
@@ -154,14 +159,14 @@ export async function addConfiguredLine(scope: Scope, input: { cartId: string; c
   return { cart, profile, line, pricing: validated.pricing }
 }
 
-export async function updateConfiguredLine(scope: Scope, input: { lineId: string; customerId: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
+export async function updateConfiguredLine(scope: Scope, input: { lineId: string; customerId: string; versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
   const line = await service(scope).retrieveConfiguredCartLine(input.lineId)
   const { cart } = await ownedCart(scope, line.cart_id, input.customerId, "configured")
   assertCartMutable(cart)
-  const validated = await validateConfiguredInput(scope, { customerId: input.customerId, projectId: line.project_id, versionId: line.version_id, quantity: input.quantity, sizes: input.sizes, sizeBreakdown: input.sizeBreakdown, deliveryType: input.deliveryType, configuration: input.configuration })
+  const validated = await validateConfiguredInput(scope, { customerId: input.customerId, projectId: line.project_id, versionId: input.versionId ?? line.version_id, quantity: input.quantity, sizes: input.sizes, sizeBreakdown: input.sizeBreakdown, deliveryType: input.deliveryType, configuration: input.configuration })
   if (!line.line_item_id) throw new MedusaError(MedusaError.Types.CONFLICT, "Configured line is missing its native cart line")
   await cartService(scope).updateLineItems(line.line_item_id, nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }))
-  const updated = await service(scope).updateConfiguredCartLines({ id: line.id, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
+  const updated = await service(scope).updateConfiguredCartLines({ id: line.id, version_id: validated.version.id, product_slug: validated.product.slug, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
   return { cart, line: updated, pricing: validated.pricing }
 }
 
@@ -254,8 +259,44 @@ export async function saveCheckout(scope: Scope, input: { cartId: string; custom
   const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
   const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
   if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
-  const metadata = { ...(cart.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate: input.requestedDeliveryDate, termsVersion: input.termsVersion, privacyVersion: input.privacyVersion, acceptedAt: new Date().toISOString() } }
+  const requestedDeliveryDate = normalizeRequestedDeliveryDate(input.requestedDeliveryDate)
+  const metadata = { ...(cart.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate, termsVersion: input.termsVersion, privacyVersion: input.privacyVersion, acceptedAt: new Date().toISOString() } }
   const updated = await cartService(scope).updateCarts(cart.id, { email: input.email.trim().toLowerCase(), shipping_address: shipping, billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } }, metadata })
   await service(scope).createTermsAcceptances({ customer_id: input.customerId, order_id: null, terms_version: input.termsVersion, privacy_version: input.privacyVersion ?? null, accepted_at: new Date(), request_id: input.requestId ?? null })
   return updated
+}
+
+export function normalizeRequestedDeliveryDate(value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Requested delivery date must be a calendar date")
+  const [year, month, day] = value.split("-").map(Number)
+  const parsed = new Date(Date.UTC(year, month - 1, day))
+  if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Requested delivery date is invalid")
+  return value
+}
+
+export async function saveCheckoutDetails(scope: Scope, input: { cartId: string; customerId: string; email: string; shippingAddress: unknown; billingAddress?: unknown; gstin?: string; billingEntity?: string; requestedDeliveryDate?: string; deliveryPreference?: string }) {
+  const { cart } = await ownedCart(scope, input.cartId, input.customerId)
+  assertCartMutable(cart)
+  const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
+  const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
+  if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
+  const requestedDeliveryDate = normalizeRequestedDeliveryDate(input.requestedDeliveryDate)
+  const previous = asRecord(cart.metadata?.garmops_checkout)
+  const metadata = {
+    ...(cart.metadata ?? {}),
+    garmops_checkout: {
+      ...previous,
+      gstin: input.gstin?.toUpperCase(),
+      billingEntity: input.billingEntity?.trim(),
+      deliveryPreference: input.deliveryPreference,
+      requestedDeliveryDate,
+    },
+  }
+  return cartService(scope).updateCarts(cart.id, {
+    email: input.email.trim().toLowerCase(),
+    shipping_address: shipping,
+    billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } },
+    metadata,
+  })
 }
