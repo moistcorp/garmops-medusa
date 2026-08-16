@@ -1,4 +1,5 @@
 import { Modules, MedusaError } from "@medusajs/framework/utils"
+import type { ILockingModule } from "@medusajs/framework/types"
 import { createStep, createWorkflow, StepResponse, WorkflowResponse } from "@medusajs/framework/workflows-sdk"
 import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
@@ -7,10 +8,10 @@ import { aggregateArtworkReviewStatus, requiredArtworkFileIds, type ArtworkRevie
 
 type Container = { resolve<T>(key: string): T }
 
-const createDesignStep = createStep("create-design", async (input: { customerId: string; title: string; productSlug: string; configuration: Record<string, unknown>; quantity: number }, { container }) => {
+const createDesignStep = createStep("create-design", async (input: { customerId: string; title: string; productSlug: string; configuration: Record<string, unknown>; quantity: number; clientOperationId?: string }, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
   const project = await service.createDesignProjects({ owner_customer_id: input.customerId, title: input.title, product_slug: input.productSlug, active_version_id: null, source: "configurator", archived: false, metadata: null })
-  const version = await service.createVersion({ projectId: project.id, productSlug: input.productSlug, configuration: input.configuration, quantity: input.quantity })
+  const version = await service.createVersion({ projectId: project.id, productSlug: input.productSlug, configuration: input.configuration, quantity: input.quantity, clientOperationId: input.clientOperationId })
   const saved = await service.updateDesignProjects({ id: project.id, active_version_id: version.id })
   return new StepResponse({ project: saved, version }, project.id)
 }, async (projectId, { container }) => {
@@ -19,11 +20,15 @@ const createDesignStep = createStep("create-design", async (input: { customerId:
 
 export const createGarmopsDesignWorkflow = createWorkflow("create-garmops-design", (input: Parameters<typeof createDesignStep>[0]) => new WorkflowResponse(createDesignStep(input)))
 
-const updateDesignStep = createStep("update-design", async (input: { projectId: string; productSlug: string; configuration: Record<string, unknown>; quantity: number }, { container }) => {
+const updateDesignStep = createStep("update-design", async (input: { projectId: string; productSlug: string; configuration: Record<string, unknown>; quantity: number; expectedRevision: number; clientOperationId: string }, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
-  const version = await service.createVersion({ projectId: input.projectId, productSlug: input.productSlug, configuration: input.configuration, quantity: input.quantity })
-  const project = await service.updateDesignProjects({ id: input.projectId, active_version_id: version.id })
-  return new StepResponse({ project, version })
+  const locking = container.resolve<ILockingModule>(Modules.LOCKING)
+  const result = await locking.execute(`design:${input.projectId}`, async () => {
+    const version = await service.createVersion({ projectId: input.projectId, productSlug: input.productSlug, configuration: input.configuration, quantity: input.quantity, expectedRevision: input.expectedRevision, clientOperationId: input.clientOperationId })
+    const project = await service.updateDesignProjects({ id: input.projectId, active_version_id: version.id })
+    return { project, version }
+  }, { timeout: 30 })
+  return new StepResponse(result)
 })
 
 export const updateGarmopsDesignWorkflow = createWorkflow("update-garmops-design", (input: Parameters<typeof updateDesignStep>[0]) => new WorkflowResponse(updateDesignStep(input)))

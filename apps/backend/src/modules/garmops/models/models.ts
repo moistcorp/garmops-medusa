@@ -5,7 +5,7 @@ export const DesignProject = model.define("design_project", {
 })
 
 export const DesignVersion = model.define("design_version", {
-  id: model.id().primaryKey(), project_id: model.text().index(), revision: model.number(), schema_version: model.number(), product_slug: model.text(), configuration: model.json(), quantity: model.number(), pricing_snapshot: model.json().nullable(), client_operation_id: model.text().nullable(),
+  id: model.id().primaryKey(), project_id: model.text().index(), revision: model.number(), schema_version: model.number(), product_slug: model.text(), configuration: model.json(), quantity: model.number(), pricing_snapshot: model.json().nullable(), client_operation_id: model.text().nullable(), client_operation_fingerprint: model.text().nullable(),
 })
 
 export const ConfiguredCartLine = model.define("configured_cart_line", {
@@ -65,7 +65,7 @@ export const NotificationEvent = model.define("notification_event", {
 })
 
 export const TermsAcceptance = model.define("terms_acceptance", {
-  id: model.id().primaryKey(), customer_id: model.text().index(), order_id: model.text().nullable(), terms_version: model.text(), privacy_version: model.text().nullable(), accepted_at: model.dateTime(), request_id: model.text().nullable(),
+  id: model.id().primaryKey(), customer_id: model.text().index(), cart_id: model.text().index(), cart_revision_hash: model.text(), order_id: model.text().nullable(), terms_version: model.text(), privacy_version: model.text().nullable(), terms_content_hash: model.text().nullable(), privacy_content_hash: model.text().nullable(), accepted_at: model.dateTime(), request_id: model.text().nullable(),
 })
 
 export const AuditLog = model.define("audit_log", {

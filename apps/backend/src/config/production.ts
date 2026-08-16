@@ -11,7 +11,7 @@ function required(env: Environment, name: string, errors: string[]): string {
 export function validateProductionEnvironment(env: Environment = process.env): void {
   if (env.NODE_ENV !== "production") return
   const errors: string[] = []
-  for (const name of ["DATABASE_URL", "REDIS_URL", "JWT_SECRET", "COOKIE_SECRET", "AUTH_MFA_ENCRYPTION_KEY", "PAYU_KEY", "PAYU_SALT", "PAYU_CALLBACK_URL", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_S3_ENDPOINT", "R2_PUBLIC_BUCKET", "R2_PRIVATE_BUCKET", "RESEND_API_KEY", "RESEND_FROM", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_CALLBACK_URL"]) required(env, name, errors)
+  for (const name of ["DATABASE_URL", "REDIS_URL", "JWT_SECRET", "COOKIE_SECRET", "AUTH_MFA_ENCRYPTION_KEY", "PAYU_KEY", "PAYU_SALT", "PAYU_CALLBACK_URL", "PAYU_BROWSER_RETURN_URL", "TURNSTILE_SECRET_KEY", "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_S3_ENDPOINT", "R2_PUBLIC_BUCKET", "R2_PRIVATE_BUCKET", "RESEND_API_KEY", "RESEND_FROM", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_CALLBACK_URL"]) required(env, name, errors)
   for (const name of ["JWT_SECRET", "COOKIE_SECRET", "AUTH_MFA_ENCRYPTION_KEY"]) {
     if ((env[name]?.trim().length ?? 0) < 32) errors.push(`${name} must be at least 32 characters long`)
   }

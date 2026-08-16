@@ -8,7 +8,8 @@ import { renderInvoicePdf, type InvoiceData } from "../domain/invoice"
 import { putPrivateObject } from "../integrations/r2"
 import { randomUUID } from "node:crypto"
 import { injectTestFailure } from "../integrations/test-failures"
-import { normalizeRequestedDeliveryDate } from "./garmops-cart"
+import { getCartRevisionHash, normalizeRequestedDeliveryDate } from "./garmops-cart"
+import { CURRENT_PRIVACY_CONTENT_HASH, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_CONTENT_HASH, CURRENT_TERMS_VERSION } from "../domain/legal"
 
 type AddressLike = { first_name?: string; last_name?: string; company?: string; address_1?: string; address_2?: string; city?: string; postal_code?: string; province?: string; state?: string; metadata?: Record<string, unknown> }
 type Container = MedusaContainer
@@ -35,6 +36,9 @@ async function ensureOrderArtifacts(container: Container, input: { orderId: stri
   if (!existingJob) await service.createProductionJobs({ order_id: order.id, order_number: orderNumber, order_type: orderType, status: "payment_confirmed", hold_from_status: null, requested_delivery_date: requestedDeliveryDate ?? null, artwork_review_status: "pending", tracking_number: null, tracking_url: null, metadata: { paymentTransactionId: input.providerTransactionId } })
   else if (!existingJob.requested_delivery_date && requestedDeliveryDate) await service.updateProductionJobs({ id: existingJob.id, requested_delivery_date: requestedDeliveryDate })
   if (!order.metadata?.garmops_order_number) await orderService.updateOrders([{ id: order.id, metadata: { ...(order.metadata ?? {}), garmops_order_number: orderNumber, garmops_order_type: orderType } }])
+  const cartRevisionHash = await getCartRevisionHash(container, input.cartId)
+  const acceptance = await service.bindTermsAcceptance({ cartId: input.cartId, customerId: String(cart.customer_id ?? order.customer_id ?? ""), cartRevisionHash, orderId: order.id, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION })
+  await orderService.updateOrders([{ id: order.id, metadata: { ...(order.metadata ?? {}), garmops_terms_acceptance: { id: acceptance.id, cartId: input.cartId, cartRevisionHash, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, termsContentHash: acceptance.terms_content_hash ?? CURRENT_TERMS_CONTENT_HASH, privacyContentHash: acceptance.privacy_content_hash ?? CURRENT_PRIVACY_CONTENT_HASH, acceptedAt: acceptance.accepted_at } } }])
 
   const lines = await service.listConfiguredCartLines({ cart_id: input.cartId }, { order: { created_at: "ASC" } })
   const snapshots = await service.listOrderConfigurationSnapshots({ order_id: order.id })
@@ -59,10 +63,18 @@ async function ensureInvoice(container: Container, input: { order: Awaited<Retur
   const billing = (input.order.billing_address ?? {}) as AddressLike
   const buyerState = String(billing.province ?? billing.state ?? "") || null
   const items = input.order.items ?? []
-  const lines: InvoiceData["lines"] = items.map((item) => ({ description: item.product_title || item.title, hsn: String(item.metadata?.hsn ?? "6109"), quantity: item.quantity, unitPaise: item.unit_price, discountPaise: Number(item.discount_total ?? 0), taxablePaise: Number(item.subtotal ?? item.unit_price * item.quantity) }))
+  const lines: InvoiceData["lines"] = items.map((item) => {
+    const hsn = String(item.metadata?.garmops_hsn_code ?? "")
+    const rate = Number(item.metadata?.garmops_gst_rate_basis_points)
+    if (!hsn || !Number.isSafeInteger(rate)) throw new MedusaError(MedusaError.Types.INVALID_DATA, `Tax configuration is missing for invoice line ${item.id}`)
+    return { description: item.product_title || item.title, hsn, quantity: item.quantity, unitPaise: item.unit_price, discountPaise: Number(item.discount_total ?? 0), taxablePaise: Number(item.subtotal ?? item.unit_price * item.quantity), gstRateBasisPoints: rate }
+  })
   const totalPaise = asPaise(input.order.total)
   const computed = lines.reduce((sum, line) => sum + line.taxablePaise, 0)
-  const gst = calculateGstBreakdown({ taxablePaise: computed, sellerState, buyerState })
+  const gst = lines.reduce((total, line) => {
+    const lineGst = calculateGstBreakdown({ taxablePaise: line.taxablePaise, sellerState, buyerState, rateBasisPoints: line.gstRateBasisPoints })
+    return { taxablePaise: total.taxablePaise + lineGst.taxablePaise, cgstPaise: total.cgstPaise + lineGst.cgstPaise, sgstPaise: total.sgstPaise + lineGst.sgstPaise, igstPaise: total.igstPaise + lineGst.igstPaise, taxPaise: total.taxPaise + lineGst.taxPaise, placeOfSupply: lineGst.placeOfSupply }
+  }, { taxablePaise: 0, cgstPaise: 0, sgstPaise: 0, igstPaise: 0, taxPaise: 0, placeOfSupply: "intra_state" as const })
   const accountingTotal = computed + gst.taxPaise
   if (accountingTotal !== totalPaise) throw new MedusaError(MedusaError.Types.CONFLICT, `Invoice total ${accountingTotal} does not reconcile to paid order total ${totalPaise}`)
   const data: InvoiceData = { invoiceNumber, invoiceDate: new Date().toISOString().slice(0, 10), orderNumber: input.orderNumber, seller: { name: process.env.INVOICE_SELLER_NAME || "Garmops", gstin: process.env.INVOICE_SELLER_GSTIN || "", address: process.env.INVOICE_SELLER_ADDRESS || "", state: sellerState, pin: process.env.INVOICE_SELLER_PIN }, buyer: { name: String(billing.first_name || input.order.email || "Customer") + (billing.last_name ? ` ${billing.last_name}` : ""), company: billing.company, gstin: billing.metadata?.gstin as string | undefined, address: [billing.address_1, billing.address_2, billing.city, billing.postal_code].filter(Boolean).join(", "), state: buyerState ?? undefined, pin: billing.postal_code }, shipping: input.order.shipping_address ? { address: [input.order.shipping_address.address_1, input.order.shipping_address.city, input.order.shipping_address.postal_code].filter(Boolean).join(", "), state: String(input.order.shipping_address.province ?? "") } : undefined, lines, payment: { provider: "PayU", reference: input.paymentId || input.providerTransactionId, status: "paid" } }
@@ -70,7 +82,7 @@ async function ensureInvoice(container: Container, input: { order: Awaited<Retur
   const billingSnapshot = data.buyer
   const shippingSnapshot = data.shipping ?? null
   const paymentSnapshot = data.payment
-  const invoice = existing ?? await service.createInvoices({ order_id: input.order.id, order_number: input.orderNumber, invoice_number: invoiceNumber, status: "pending", subtotal_paise: computed, tax_paise: gst.taxPaise, total_paise: totalPaise, cgst_paise: gst.cgstPaise, sgst_paise: gst.sgstPaise, igst_paise: gst.igstPaise, gst_rate_basis_points: 500, place_of_supply: gst.placeOfSupply, hsn_snapshot: { lines: lines.map((line) => ({ hsn: line.hsn, description: line.description })) }, seller_snapshot: sellerSnapshot, billing_snapshot: billingSnapshot, shipping_snapshot: shippingSnapshot, payment_snapshot: paymentSnapshot, pdf_file_id: null, issued_at: null, last_error: null })
+  const invoice = existing ?? await service.createInvoices({ order_id: input.order.id, order_number: input.orderNumber, invoice_number: invoiceNumber, status: "pending", subtotal_paise: computed, tax_paise: gst.taxPaise, total_paise: totalPaise, cgst_paise: gst.cgstPaise, sgst_paise: gst.sgstPaise, igst_paise: gst.igstPaise, gst_rate_basis_points: lines.length && lines.every((line) => line.gstRateBasisPoints === lines[0].gstRateBasisPoints) ? lines[0].gstRateBasisPoints : 0, place_of_supply: gst.placeOfSupply, hsn_snapshot: { lines: lines.map((line) => ({ hsn: line.hsn, gstRateBasisPoints: line.gstRateBasisPoints, description: line.description })) }, seller_snapshot: sellerSnapshot, billing_snapshot: billingSnapshot, shipping_snapshot: shippingSnapshot, payment_snapshot: paymentSnapshot, pdf_file_id: null, issued_at: null, last_error: null })
   if (invoice.status === "issued" && invoice.pdf_file_id) return invoice
   try {
     injectTestFailure("invoice")

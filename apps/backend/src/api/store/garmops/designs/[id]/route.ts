@@ -16,9 +16,11 @@ export async function PATCH(req: AuthenticatedMedusaRequest, res: MedusaResponse
   const service = req.scope.resolve<GarmopsModuleService>(GARMOPS_MODULE)
   const project = await service.retrieveDesignProject(req.params.id)
   if (project.owner_customer_id !== req.auth_context?.actor_id) return res.status(404).json({ code: "NOT_FOUND", message: "Design not found", requestId: req.requestId })
-  if (!body.configuration || !Number.isInteger(body.quantity) || !Number.isInteger(body.revision)) return res.status(400).json({ code: "INVALID_REVISION", message: "Revision, configuration, and quantity are required", requestId: req.requestId })
-  const latest = (await service.listDesignVersions({ project_id: project.id }, { order: { revision: "DESC" }, take: 1 }))[0]
-  if (!latest || latest.revision !== body.revision) return res.status(409).json({ code: "STALE_DESIGN_REVISION", message: "Design has changed; reload before saving", requestId: req.requestId })
-  const { result } = await updateGarmopsDesignWorkflow(req.scope).run({ input: { projectId: project.id, productSlug: body.productSlug ?? project.product_slug, configuration: body.configuration, quantity: body.quantity as number } })
+  if (!body.configuration || !Number.isInteger(body.quantity) || !Number.isInteger(body.revision) || (body.revision ?? 0) < 1) return res.status(400).json({ code: "INVALID_REVISION", message: "Revision, configuration, and quantity are required", requestId: req.requestId })
+  if (!body.clientOperationId) return res.status(400).json({ code: "CLIENT_OPERATION_REQUIRED", message: "A client operation id is required for design saves", requestId: req.requestId })
+  const quantity = body.quantity as number
+  const expectedRevision = body.revision as number
+  const configuration = body.configuration
+  const { result } = await updateGarmopsDesignWorkflow(req.scope).run({ input: { projectId: project.id, productSlug: body.productSlug ?? project.product_slug, configuration, quantity, expectedRevision, clientOperationId: body.clientOperationId } })
   res.json({ ...result, requestId: req.requestId })
 }

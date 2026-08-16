@@ -16,6 +16,13 @@ export type CatalogProduct = {
   details: readonly string[]
   careInstructions: readonly string[]
   metadata: Record<string, unknown>
+  /** HSN heading used for GST invoicing. */
+  hsnCode: string
+  /** Default GST rate in basis points. Apparel may use the threshold rule below. */
+  gstRateBasisPoints: number
+  gstRateRule?: "fixed" | "apparel_transaction_value"
+  gstHighRateBasisPoints?: number
+  gstThresholdPaise?: number
 }
 
 const prices: Record<string, number> = {
@@ -31,8 +38,22 @@ const prices: Record<string, number> = {
   "boxy-fit-hoodie-320gsm": 615,
 }
 
-const product = (input: Omit<CatalogProduct, "basePriceRupees" | "metadata">): CatalogProduct => ({
+const productTax: Record<string, Pick<CatalogProduct, "hsnCode" | "gstRateBasisPoints" | "gstRateRule" | "gstHighRateBasisPoints" | "gstThresholdPaise">> = {
+  "regular-fit-tee-200gsm": { hsnCode: "6109", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "boxy-fit-tee-200gsm": { hsnCode: "6109", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "regular-fit-tee-260gsm": { hsnCode: "6109", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "boxy-fit-tee-260gsm": { hsnCode: "6109", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "longsleeve-tee-260gsm": { hsnCode: "6109", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "polo-280gsm": { hsnCode: "6105", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "canvas-tote-bag": { hsnCode: "4202 22 20", gstRateBasisPoints: 1200, gstRateRule: "fixed" },
+  "regular-fit-sweatshirt-320gsm": { hsnCode: "6110", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "regular-fit-hoodie-320gsm": { hsnCode: "6110", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+  "boxy-fit-hoodie-320gsm": { hsnCode: "6110", gstRateBasisPoints: 500, gstRateRule: "apparel_transaction_value", gstHighRateBasisPoints: 1200, gstThresholdPaise: 100000 },
+}
+
+const product = (input: Omit<CatalogProduct, "basePriceRupees" | "metadata" | "hsnCode" | "gstRateBasisPoints" | "gstRateRule" | "gstHighRateBasisPoints" | "gstThresholdPaise">): CatalogProduct => ({
   ...input,
+  ...productTax[input.slug],
   basePriceRupees: prices[input.slug],
   metadata: {
     pricingKey: input.slug,

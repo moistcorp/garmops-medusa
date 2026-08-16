@@ -4,6 +4,7 @@ import {
 } from "./models/models"
 import { createHash, randomInt, timingSafeEqual } from "node:crypto"
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../domain/production"
+import { canonicalJson, fingerprint } from "../../domain/legal"
 
 class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, CheckoutIdempotency, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentAttempt, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
   updateOrderConfigurationSnapshots = async (): Promise<never> => {
@@ -14,11 +15,30 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
     throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Order configuration snapshots are immutable")
   }
 
-  async createVersion(input: { projectId: string; configuration: Record<string, unknown>; productSlug: string; quantity: number; schemaVersion?: number; clientOperationId?: string }) {
+  async createVersion(input: { projectId: string; configuration: Record<string, unknown>; productSlug: string; quantity: number; schemaVersion?: number; clientOperationId?: string; expectedRevision?: number }) {
+    const operationFingerprint = input.clientOperationId ? fingerprint({ configuration: input.configuration, productSlug: input.productSlug, quantity: input.quantity }) : null
+    if (input.clientOperationId) {
+      const existing = (await this.listDesignVersions({ project_id: input.projectId, client_operation_id: input.clientOperationId }, { take: 1 }))[0]
+      if (existing) {
+        if (existing.client_operation_fingerprint !== operationFingerprint && canonicalJson({ configuration: existing.configuration, productSlug: existing.product_slug, quantity: existing.quantity }) !== canonicalJson({ configuration: input.configuration, productSlug: input.productSlug, quantity: input.quantity })) throw new MedusaError(MedusaError.Types.CONFLICT, "This design operation was already used for different content")
+        return existing
+      }
+    }
     const versions = await this.listDesignVersions({ project_id: input.projectId }, { order: { revision: "DESC" } })
     const latest = versions[0]
-    if (input.clientOperationId && latest?.client_operation_id === input.clientOperationId) return latest
-    return this.createDesignVersions({ project_id: input.projectId, configuration: input.configuration, product_slug: input.productSlug, quantity: input.quantity, schema_version: input.schemaVersion ?? 1, revision: (latest?.revision ?? 0) + 1, client_operation_id: input.clientOperationId ?? null })
+    if (input.expectedRevision !== undefined && latest?.revision !== input.expectedRevision) throw new MedusaError(MedusaError.Types.CONFLICT, "Design has changed; reload before saving")
+    try {
+      return await this.createDesignVersions({ project_id: input.projectId, configuration: input.configuration, product_slug: input.productSlug, quantity: input.quantity, schema_version: input.schemaVersion ?? 1, revision: (latest?.revision ?? 0) + 1, client_operation_id: input.clientOperationId ?? null, client_operation_fingerprint: operationFingerprint })
+    } catch (error) {
+      if (input.clientOperationId) {
+        const concurrent = (await this.listDesignVersions({ project_id: input.projectId, client_operation_id: input.clientOperationId }, { take: 1 }))[0]
+        if (concurrent) {
+          if (concurrent.client_operation_fingerprint !== operationFingerprint) throw new MedusaError(MedusaError.Types.CONFLICT, "This design operation was already used for different content")
+          return concurrent
+        }
+      }
+      throw new MedusaError(MedusaError.Types.CONFLICT, "Design changed concurrently; reload before saving")
+    }
   }
 
   async duplicateProject(input: { projectId: string; ownerCustomerId: string; clientOperationId?: string }) {
@@ -116,6 +136,12 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
     const attempt = await this.retrievePaymentAttempt(input.id)
     if (["invalidated", "completed", "failed", "expired", "reconciliation_required"].includes(attempt.status)) return attempt
     return this.updatePaymentAttempts({ id: attempt.id, status: "invalidated", invalidated_at: new Date(), last_error: input.reason ?? null })
+  }
+
+  async bindTermsAcceptance(input: { cartId: string; customerId: string; cartRevisionHash: string; orderId: string; termsVersion: string; privacyVersion: string }) {
+    const acceptance = (await this.listTermsAcceptances({ cart_id: input.cartId, customer_id: input.customerId, cart_revision_hash: input.cartRevisionHash, terms_version: input.termsVersion, privacy_version: input.privacyVersion }, { order: { accepted_at: "DESC" }, take: 1 }))[0]
+    if (!acceptance) throw new MedusaError(MedusaError.Types.CONFLICT, "Current Terms and Privacy acceptance is required for this cart revision")
+    return this.updateTermsAcceptances({ id: acceptance.id, order_id: input.orderId })
   }
 }
 

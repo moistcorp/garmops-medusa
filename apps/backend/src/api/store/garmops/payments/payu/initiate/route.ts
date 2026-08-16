@@ -1,5 +1,5 @@
 import type { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import type { ICartModuleService } from "@medusajs/framework/types"
+import type { ICartModuleService, MedusaContainer } from "@medusajs/framework/types"
 import { Modules } from "@medusajs/framework/utils"
 import { MedusaError } from "@medusajs/framework/utils"
 import { createHash } from "node:crypto"
@@ -7,6 +7,9 @@ import { GARMOPS_MODULE } from "../../../../../../modules/garmops"
 import type GarmopsModuleService from "../../../../../../modules/garmops/service"
 import { findCatalogProduct } from "../../../../../../domain/catalog"
 import { priceConfiguredLine, samplePrice, validateConfiguredLine } from "../../../../../../domain/pricing"
+import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from "../../../../../../domain/legal"
+import { extraLeadTimeForConfiguration, validateDeliveryDate } from "../../../../../../domain/delivery"
+import { getCartRevisionHash } from "../../../../../../services/garmops-cart"
 import { initiatePayuPaymentWorkflow } from "../../../../../../workflows/initiate-payu-payment"
 
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
@@ -33,12 +36,19 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
       await cartService.updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { ...existingAttempt, status: "invalidated", invalidatedAt: new Date().toISOString() } } })
     }
     const lines = await service.listConfiguredCartLines({ cart_id: cartId })
+    const checkout = asRecord(cart.metadata?.garmops_checkout)
+    const configuredExtraLeadTime = await extraLeadTimeForLines(req.scope, lines, service)
+    validateDeliveryDate({ deliveryType: typeof checkout.deliveryPreference === "string" ? checkout.deliveryPreference : undefined, requestedDeliveryDate: typeof checkout.requestedDeliveryDate === "string" ? checkout.requestedDeliveryDate : undefined, extraLeadTimeDays: configuredExtraLeadTime })
+    const cartRevisionHash = await getCartRevisionHash(req.scope, cartId)
+    const acceptance = (await service.listTermsAcceptances({ cart_id: cartId, customer_id: actorId, cart_revision_hash: cartRevisionHash, terms_version: CURRENT_TERMS_VERSION, privacy_version: CURRENT_PRIVACY_VERSION }, { order: { accepted_at: "DESC" }, take: 1 }))[0]
+    if (!acceptance) throw new MedusaError(MedusaError.Types.CONFLICT, "Current Terms and Privacy acceptance is required for this cart revision")
     let authoritativeTotal = 0
     if (profile.cart_type === "configured") {
       if (!lines.length) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Configured cart has no configured lines")
       for (const line of lines) {
         const version = await service.retrieveDesignVersion(line.version_id)
         const configuration = version.configuration as Record<string, unknown>
+        validateDeliveryDate({ deliveryType: line.delivery_type, requestedDeliveryDate: typeof checkout.requestedDeliveryDate === "string" ? checkout.requestedDeliveryDate : undefined, extraLeadTimeDays: extraLeadTimeForConfiguration(configuration) })
         const sizes = line.size_breakdown as Record<string, number>
         validateConfiguredLine({ productSlug: line.product_slug, quantity: line.quantity, sizes, allowedSizes: findCatalogProduct(line.product_slug)?.sizes ?? [], colourType: configuration.colourType as "signature" | "custom_dye" | undefined, artwork: configuration.artwork as never, neckLabel: configuration.neckLabel as never, deliveryType: line.delivery_type as "rush" | "standard" | "flexible" })
         for (const fileId of referencedFileIds(configuration)) {
@@ -58,7 +68,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     const sessionFields = (sessionData.fields ?? {}) as Record<string, unknown>
     const providerTransactionId = String(sessionData.txnid ?? sessionFields.txnid ?? "")
     if (!providerTransactionId || !session?.id) throw new MedusaError(MedusaError.Types.CONFLICT, "PayU did not return a payment transaction")
-    const snapshot = { cartId, cartType: profile.cart_type, amountPaise: authoritativeTotal, configuredLines: lines.map((line) => ({ id: line.id, lineItemId: line.line_item_id, projectId: line.project_id, versionId: line.version_id, productSlug: line.product_slug, quantity: line.quantity, sizes: line.size_breakdown, pricing: line.pricing_snapshot })), sampleItems: (cart.items ?? []).map((item) => ({ id: item.id, quantity: item.quantity, metadata: item.metadata })), checkout: cart.metadata?.garmops_checkout ?? null }
+    const snapshot = { cartId, cartType: profile.cart_type, amountPaise: authoritativeTotal, cartRevisionHash, configuredLines: lines.map((line) => ({ id: line.id, lineItemId: line.line_item_id, projectId: line.project_id, versionId: line.version_id, productSlug: line.product_slug, quantity: line.quantity, sizes: line.size_breakdown, pricing: line.pricing_snapshot })), sampleItems: (cart.items ?? []).map((item) => ({ id: item.id, quantity: item.quantity, metadata: item.metadata })), checkout: cart.metadata?.garmops_checkout ?? null, legal: { acceptanceId: acceptance.id, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION } }
     const revisionHash = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
     const expiresAt = new Date(Date.now() + 30 * 60_000)
     const attempt = await service.createPaymentAttempts({ provider: "payu", cart_id: cartId, customer_id: actorId, payment_session_id: String(session.id), provider_transaction_id: providerTransactionId, expected_amount_paise: authoritativeTotal, cart_revision_hash: revisionHash, snapshot, status: "active", expires_at: expiresAt, invalidated_at: null, completed_at: null, last_error: null })
@@ -69,6 +79,15 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   } catch (error) {
     res.status(400).json({ code: "PAYMENT_INITIATION_FAILED", message: error instanceof Error ? error.message : "Payment could not be initiated", requestId: req.requestId })
   }
+}
+
+async function extraLeadTimeForLines(_scope: Pick<MedusaContainer, "resolve">, lines: Array<{ version_id: string }>, service: GarmopsModuleService): Promise<number> {
+  for (const line of lines) {
+    const version = await service.retrieveDesignVersion(line.version_id)
+    const extra = extraLeadTimeForConfiguration(version.configuration)
+    if (extra > 0) return extra
+  }
+  return 0
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

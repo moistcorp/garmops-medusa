@@ -26,7 +26,12 @@ describe("Garmops authoritative pricing", () => {
   it("prices samples separately with free shipping", () => {
     const result = samplePrice("canvas-tote-bag", "One Size", 2)
     expect(result.shippingPaise).toBe(0)
+    expect(result.gstRateBasisPoints).toBe(1200)
     expect(result.totalPaise).toBeGreaterThan(result.subtotalPaise)
+  })
+  it("applies the apparel transaction-value threshold per piece", () => {
+    expect(priceConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 50 }).gstRateBasisPoints).toBe(500)
+    expect(priceConfiguredLine({ productSlug: "boxy-fit-hoodie-320gsm", quantity: 50, colourType: "custom_dye", artwork: { front: { fileId: "f", technique: "screen_print" }, back: { fileId: "b", technique: "dtf" } }, neckLabel: { labelType: "custom" }, deliveryType: "rush" }).gstRateBasisPoints).toBe(1200)
   })
   it("keeps MOQ independent for two otherwise identical configured lines", () => {
     expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 10, sizes: { S: 10 }, allowedSizes: ["S"] })).toThrow()
@@ -39,7 +44,7 @@ describe("Garmops authoritative pricing", () => {
     expect(() => validateConfiguredLine({ productSlug: "regular-fit-tee-200gsm", quantity: 0, sizes: {}, allowedSizes: [] })).toThrow()
   })
   it("splits GST intra-state and inter-state with integer-safe totals", () => {
-    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Karnataka" })).toMatchObject({ cgstPaise: 2, sgstPaise: 3, igstPaise: 0, taxPaise: 5 })
-    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Maharashtra" })).toMatchObject({ cgstPaise: 0, sgstPaise: 0, igstPaise: 5, taxPaise: 5 })
+    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Karnataka", rateBasisPoints: 500 })).toMatchObject({ cgstPaise: 2, sgstPaise: 3, igstPaise: 0, taxPaise: 5 })
+    expect(calculateGstBreakdown({ taxablePaise: 101, sellerState: "Karnataka", buyerState: "Maharashtra", rateBasisPoints: 500 })).toMatchObject({ cgstPaise: 0, sgstPaise: 0, igstPaise: 5, taxPaise: 5 })
   })
 })

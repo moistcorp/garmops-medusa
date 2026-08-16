@@ -5,6 +5,7 @@ import { createHash } from "node:crypto"
 import { addSampleLine, createCustomerCart, saveCheckout, summarizeCart } from "../../../../services/garmops-cart"
 import { GARMOPS_MODULE } from "../../../../modules/garmops"
 import type GarmopsModuleService from "../../../../modules/garmops/service"
+import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from "../../../../domain/legal"
 
 type SampleCheckoutBody = {
   items?: Array<{ productSlug?: string; size?: string; quantity?: number }>
@@ -58,7 +59,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
       if (!item.productSlug || !item.size || typeof quantity !== "number" || !Number.isSafeInteger(quantity) || quantity < 1) throw new Error("Each sample line needs a canonical product slug, size, and positive quantity")
       await addSampleLine(req.scope, { cartId: cart.id, customerId, productSlug: item.productSlug, size: item.size, quantity })
     }
-    await saveCheckout(req.scope, { cartId: cart.id, customerId, email, orderNotes: body.orderNotes, shippingAddress: { ...shippingAddress, first_name: firstName, last_name: contact.lastName, phone, country_code: "in" }, billingAddress: { ...shippingAddress, first_name: firstName, last_name: contact.lastName, phone, country_code: "in" }, termsVersion: "2026-07-29", privacyVersion: "2026-07-29", requestId: req.requestId })
+    await saveCheckout(req.scope, { cartId: cart.id, customerId, email, orderNotes: body.orderNotes, shippingAddress: { ...shippingAddress, first_name: firstName, last_name: contact.lastName, phone, country_code: "in" }, billingAddress: { ...shippingAddress, first_name: firstName, last_name: contact.lastName, phone, country_code: "in" }, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, requestId: req.requestId })
     const summary = await summarizeCart(req.scope, cart.id, customerId)
     await service.createCheckoutIdempotencies({ key: storageKey, customer_id: customerId, request_fingerprint: requestFingerprint, cart_id: cart.id, status: "prepared", result: { subtotalPaise: summary.subtotalPaise, taxPaise: summary.gstPaise, totalPaise: summary.grandTotalPaise }, expires_at: new Date(Date.now() + 24 * 60 * 60_000) })
     return res.status(201).json({ order: { checkoutPaymentAttemptId: cart.id, alreadyFinalized: false, orderId: null, orderNumber: null, subtotalPaise: summary.subtotalPaise, taxPaise: summary.gstPaise, totalPaise: summary.grandTotalPaise }, requestId: req.requestId })

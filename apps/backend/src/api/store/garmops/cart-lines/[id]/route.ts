@@ -5,6 +5,7 @@ export async function PATCH(req: AuthenticatedMedusaRequest, res: MedusaResponse
   const body = req.body as { versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: Record<string, unknown> }
   const customerId = req.auth_context?.actor_id
   if (!customerId) return res.status(401).json({ code: "UNAUTHENTICATED", message: "Customer authentication is required", requestId: req.requestId })
+  if (Object.prototype.hasOwnProperty.call(body, "configuration")) return res.status(400).json({ code: "CONFIGURATION_OVERRIDE_FORBIDDEN", message: "Manufacturing configuration must come from the immutable DesignVersion", requestId: req.requestId })
   try {
     const result = await updateConfiguredLine(req.scope, { ...body, lineId: req.params.id, customerId })
     return res.json({ line: result.line, pricing: result.pricing, cart: await summarizeCart(req.scope, result.cart.id, customerId), requestId: req.requestId })

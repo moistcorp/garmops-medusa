@@ -7,6 +7,7 @@ export type InvoiceLine = {
   unitPaise: number
   discountPaise: number
   taxablePaise: number
+  gstRateBasisPoints?: number
 }
 
 export type InvoiceData = {
@@ -22,7 +23,10 @@ export type InvoiceData = {
 
 export function calculateInvoiceTotals(data: InvoiceData) {
   const subtotalPaise = data.lines.reduce((sum, line) => sum + line.taxablePaise, 0)
-  const gst = calculateGstBreakdown({ taxablePaise: subtotalPaise, sellerState: data.seller.state, buyerState: data.buyer.state })
+  const gst = data.lines.reduce((total, line) => {
+    const lineGst = calculateGstBreakdown({ taxablePaise: line.taxablePaise, sellerState: data.seller.state, buyerState: data.buyer.state, rateBasisPoints: line.gstRateBasisPoints })
+    return { taxablePaise: total.taxablePaise + lineGst.taxablePaise, cgstPaise: total.cgstPaise + lineGst.cgstPaise, sgstPaise: total.sgstPaise + lineGst.sgstPaise, igstPaise: total.igstPaise + lineGst.igstPaise, taxPaise: total.taxPaise + lineGst.taxPaise, placeOfSupply: lineGst.placeOfSupply }
+  }, { taxablePaise: 0, cgstPaise: 0, sgstPaise: 0, igstPaise: 0, taxPaise: 0, placeOfSupply: "intra_state" as const })
   return { subtotalPaise, ...gst, totalPaise: subtotalPaise + gst.taxPaise }
 }
 

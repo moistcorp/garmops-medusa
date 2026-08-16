@@ -1,7 +1,6 @@
 import { findCatalogProduct, PRINT_TECHNIQUES } from "./catalog"
 import { MedusaError } from "@medusajs/framework/utils"
 
-export const GST_RATE_BASIS_POINTS = 500
 export const CUSTOM_DYE_MOQ_UNITS = 100
 export const CUSTOM_DYE_UNIT_INCREASE_PERCENT = 15.33
 export const BACK_ARTWORK_UNIT_INCREASE_PERCENT = 22
@@ -51,6 +50,29 @@ export type PricingSnapshot = {
   adjustments: readonly { label: string; amountPaise?: number; percent?: number }[]
 }
 
+export type ProductTax = {
+  hsnCode: string
+  gstRateBasisPoints: number
+  gstRateRule: "fixed" | "apparel_transaction_value"
+  gstHighRateBasisPoints?: number
+  gstThresholdPaise?: number
+}
+
+export function requireProductTax(productSlug: string): ProductTax {
+  const product = findCatalogProduct(productSlug)
+  const rate = product?.gstRateBasisPoints
+  if (!product?.hsnCode || typeof rate !== "number" || !Number.isSafeInteger(rate) || rate < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, `Tax configuration is missing for orderable product ${productSlug}; payment cannot be initiated`)
+  const gstRateRule = product.gstRateRule ?? "fixed"
+  if (gstRateRule === "apparel_transaction_value" && (!Number.isSafeInteger(product.gstHighRateBasisPoints) || !Number.isSafeInteger(product.gstThresholdPaise))) throw new MedusaError(MedusaError.Types.INVALID_DATA, `GST threshold configuration is missing for orderable product ${productSlug}; payment cannot be initiated`)
+  return { hsnCode: product.hsnCode, gstRateBasisPoints: rate, gstRateRule, gstHighRateBasisPoints: product.gstHighRateBasisPoints, gstThresholdPaise: product.gstThresholdPaise }
+}
+
+export function gstRateForUnitPrice(tax: ProductTax, unitPricePaise: number): number {
+  if (!Number.isSafeInteger(unitPricePaise) || unitPricePaise < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Unit price must be a non-negative integer number of paise")
+  if (tax.gstRateRule === "apparel_transaction_value" && tax.gstThresholdPaise !== undefined && unitPricePaise > tax.gstThresholdPaise) return tax.gstHighRateBasisPoints ?? tax.gstRateBasisPoints
+  return tax.gstRateBasisPoints
+}
+
 export type GstBreakdown = {
   taxablePaise: number
   cgstPaise: number
@@ -60,7 +82,7 @@ export type GstBreakdown = {
   placeOfSupply: "intra_state" | "inter_state"
 }
 
-export function calculateTaxPaise(taxablePaise: number, rateBasisPoints = GST_RATE_BASIS_POINTS): number {
+export function calculateTaxPaise(taxablePaise: number, rateBasisPoints: number): number {
   if (!Number.isSafeInteger(taxablePaise) || taxablePaise < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Taxable value must be a non-negative integer number of paise")
   return Math.round((taxablePaise * rateBasisPoints) / 10_000)
 }
@@ -71,7 +93,8 @@ export function calculateGstBreakdown(input: {
   buyerState?: string | null
   rateBasisPoints?: number
 }): GstBreakdown {
-  const taxPaise = calculateTaxPaise(input.taxablePaise, input.rateBasisPoints)
+  if (!Number.isSafeInteger(input.rateBasisPoints)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GST rate is not configured")
+  const taxPaise = calculateTaxPaise(input.taxablePaise, input.rateBasisPoints as number)
   const intraState = Boolean(input.buyerState && input.sellerState.trim().toLowerCase() === input.buyerState.trim().toLowerCase())
   return {
     taxablePaise: input.taxablePaise,
@@ -94,6 +117,7 @@ function hasAsset(side?: ArtworkSideInput): boolean {
 export function priceConfiguredLine(input: PricingInput): PricingSnapshot {
   const item = findCatalogProduct(input.productSlug)
   if (!item) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
+  const tax = requireProductTax(input.productSlug)
   if (!Number.isSafeInteger(input.quantity) || input.quantity <= 0 || input.quantity > 1_000_000) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Quantity must be a positive safe integer")
   const adjustments: { label: string; amountPaise?: number; percent?: number }[] = []
   let unitRupees = item.basePriceRupees
@@ -128,8 +152,9 @@ export function priceConfiguredLine(input: PricingInput): PricingSnapshot {
   const unitPricePaise = discountedMerchandiseUnitPaise + rushSurchargeUnitPaise
   const subtotalPaise = unitPricePaise * input.quantity
   const shippingPaise = 0
-  const taxPaise = calculateTaxPaise(subtotalPaise)
-  return Object.freeze({ pricingVersion: PRICING_VERSION, baseUnitPaise, configuredUnitPaise, discountedMerchandiseUnitPaise, discountPercent, volumeDiscountPaise, rushSurchargeUnitPaise, rushSurchargePaise: rushSurchargeUnitPaise * input.quantity, unitPricePaise, quantity: input.quantity, subtotalPaise, shippingPaise, taxPaise, totalPaise: subtotalPaise + taxPaise + shippingPaise, gstRateBasisPoints: GST_RATE_BASIS_POINTS, adjustments: Object.freeze(adjustments) })
+  const gstRateBasisPoints = gstRateForUnitPrice(tax, unitPricePaise)
+  const taxPaise = calculateTaxPaise(subtotalPaise, gstRateBasisPoints)
+  return Object.freeze({ pricingVersion: PRICING_VERSION, baseUnitPaise, configuredUnitPaise, discountedMerchandiseUnitPaise, discountPercent, volumeDiscountPaise, rushSurchargeUnitPaise, rushSurchargePaise: rushSurchargeUnitPaise * input.quantity, unitPricePaise, quantity: input.quantity, subtotalPaise, shippingPaise, taxPaise, totalPaise: subtotalPaise + taxPaise + shippingPaise, gstRateBasisPoints, adjustments: Object.freeze(adjustments) })
 }
 
 export function validateConfiguredLine(input: PricingInput & { sizes: Record<string, number>; allowedSizes: readonly string[] }): void {
@@ -149,8 +174,10 @@ export function validateConfiguredLine(input: PricingInput & { sizes: Record<str
 export function samplePrice(productSlug: string, size: string, quantity: number): PricingSnapshot {
   const item = findCatalogProduct(productSlug)
   if (!item || !item.sizes.includes(size) || !Number.isSafeInteger(quantity) || quantity < 1 || quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Sample product, size, or quantity is invalid")
+  const tax = requireProductTax(productSlug)
   const unitPricePaise = item.basePriceRupees * 100
   const subtotalPaise = unitPricePaise * quantity
-  const taxPaise = calculateTaxPaise(subtotalPaise)
-  return Object.freeze({ pricingVersion: "catalogue-samples-2026-01", baseUnitPaise: unitPricePaise, configuredUnitPaise: unitPricePaise, discountedMerchandiseUnitPaise: unitPricePaise, discountPercent: 0, volumeDiscountPaise: 0, rushSurchargeUnitPaise: 0, rushSurchargePaise: 0, unitPricePaise, quantity, subtotalPaise, shippingPaise: 0, taxPaise, totalPaise: subtotalPaise + taxPaise, gstRateBasisPoints: GST_RATE_BASIS_POINTS, adjustments: [] })
+  const gstRateBasisPoints = gstRateForUnitPrice(tax, unitPricePaise)
+  const taxPaise = calculateTaxPaise(subtotalPaise, gstRateBasisPoints)
+  return Object.freeze({ pricingVersion: "catalogue-samples-2026-01", baseUnitPaise: unitPricePaise, configuredUnitPaise: unitPricePaise, discountedMerchandiseUnitPaise: unitPricePaise, discountPercent: 0, volumeDiscountPaise: 0, rushSurchargeUnitPaise: 0, rushSurchargePaise: 0, unitPricePaise, quantity, subtotalPaise, shippingPaise: 0, taxPaise, totalPaise: subtotalPaise + taxPaise, gstRateBasisPoints, adjustments: [] })
 }

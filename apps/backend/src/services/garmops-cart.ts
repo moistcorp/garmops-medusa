@@ -6,6 +6,9 @@ import type GarmopsModuleService from "../modules/garmops/service"
 import { findCatalogProduct, PRINT_TECHNIQUES, REFLECTIVE_COLOURS } from "../domain/catalog"
 import { priceConfiguredLine, samplePrice, validateConfiguredLine, type PricingSnapshot } from "../domain/pricing"
 import { paymentLockIsActive } from "../domain/payment"
+import { canonicalJson, fingerprint } from "../domain/legal"
+import { CURRENT_PRIVACY_CONTENT_HASH, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_CONTENT_HASH, CURRENT_TERMS_VERSION } from "../domain/legal"
+import { extraLeadTimeForConfiguration, validateDeliveryDate } from "../domain/delivery"
 
 type Scope = Pick<MedusaContainer, "resolve">
 type CartService = ICartModuleService
@@ -126,7 +129,8 @@ export async function validateConfiguredInput(scope: Scope, input: { customerId:
   if (version.project_id !== project.id) throw new MedusaError(MedusaError.Types.FORBIDDEN, "Design version does not belong to the project")
   const product = findCatalogProduct(version.product_slug)
   if (!product) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
-  const configuration = { ...asRecord(version.configuration), ...asRecord(input.configuration) }
+  if (input.configuration !== undefined) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Manufacturing configuration must come from the immutable DesignVersion")
+  const configuration = asRecord(version.configuration)
   const quantity = input.quantity ?? version.quantity
   const sizes = input.sizes ?? input.sizeBreakdown
   if (!sizes) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Size breakdown is required")
@@ -141,7 +145,7 @@ export async function validateConfiguredInput(scope: Scope, input: { customerId:
   return { project, version, product, configuration, quantity, sizes, deliveryType, pricing }
 }
 
-function nativeLineData(input: { product: { slug: string; name: string; technicalName: string }; quantity: number; pricing: PricingSnapshot; configuration: JsonRecord; projectId: string; versionId: string; sizes: Record<string, number>; deliveryType: string }) {
+function nativeLineData(input: { product: { slug: string; name: string; technicalName: string; hsnCode?: string; gstRateBasisPoints?: number }; quantity: number; pricing: PricingSnapshot; configuration: JsonRecord; projectId: string; versionId: string; sizes: Record<string, number>; deliveryType: string }) {
   return {
     title: input.product.name,
     product_title: input.product.technicalName,
@@ -150,8 +154,8 @@ function nativeLineData(input: { product: { slug: string; name: string; technica
     unit_price: input.pricing.unitPricePaise,
     is_custom_price: true,
     is_tax_inclusive: false,
-    tax_lines: [{ code: "GST", rate: 5, description: "Goods and Services Tax" }],
-    metadata: { garmops_configured: true, garmops_project_id: input.projectId, garmops_version_id: input.versionId, garmops_product_slug: input.product.slug, garmops_size_breakdown: input.sizes, garmops_delivery_type: input.deliveryType, garmops_configuration: input.configuration, garmops_pricing_snapshot: input.pricing },
+    tax_lines: [{ code: "GST", rate: input.pricing.gstRateBasisPoints / 100, description: "Goods and Services Tax" }],
+    metadata: { garmops_configured: true, garmops_project_id: input.projectId, garmops_version_id: input.versionId, garmops_product_slug: input.product.slug, garmops_size_breakdown: input.sizes, garmops_delivery_type: input.deliveryType, garmops_configuration: input.configuration, garmops_pricing_snapshot: input.pricing, garmops_hsn_code: input.product.hsnCode, garmops_gst_rate_basis_points: input.pricing.gstRateBasisPoints },
   }
 }
 
@@ -195,7 +199,7 @@ export async function addSampleLine(scope: Scope, input: { cartId: string; custo
   if (existingQuantity + input.quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample size can contain at most 100 units")
   let item
   if (existing) item = await cartService(scope).updateLineItems(existing.id, { quantity: existingQuantity + input.quantity, unit_price: pricing.unitPricePaise, is_custom_price: true, is_tax_inclusive: false, metadata: { ...(existing.metadata ?? {}), garmops_sample_pricing_snapshot: pricing } })
-  else item = (await cartService(scope).addLineItems({ cart_id: cart.id, title: `${product.name} sample`, product_title: product.technicalName, quantity: input.quantity, requires_shipping: false, unit_price: pricing.unitPricePaise, is_custom_price: true, is_tax_inclusive: false, tax_lines: [{ code: "GST", rate: 5, description: "Goods and Services Tax" }], metadata: { garmops_sample: true, garmops_sample_product_slug: input.productSlug, garmops_sample_size: input.size, garmops_sample_pricing_snapshot: pricing } }))[0]
+  else item = (await cartService(scope).addLineItems({ cart_id: cart.id, title: `${product.name} sample`, product_title: product.technicalName, quantity: input.quantity, requires_shipping: false, unit_price: pricing.unitPricePaise, is_custom_price: true, is_tax_inclusive: false, tax_lines: [{ code: "GST", rate: pricing.gstRateBasisPoints / 100, description: "Goods and Services Tax" }], metadata: { garmops_sample: true, garmops_sample_product_slug: input.productSlug, garmops_sample_size: input.size, garmops_sample_pricing_snapshot: pricing, garmops_hsn_code: product.hsnCode, garmops_gst_rate_basis_points: pricing.gstRateBasisPoints } }))[0]
   return { cart, profile, item, pricing }
 }
 
@@ -260,14 +264,15 @@ export async function summarizeCart(scope: Scope, cartId: string, customerId: st
 export async function saveCheckout(scope: Scope, input: { cartId: string; customerId: string; email: string; projectName?: string; orderNotes?: string; gstin?: string; billingEntity?: string; shippingAddress: unknown; billingAddress?: unknown; termsVersion: string; privacyVersion?: string; requestedDeliveryDate?: string; deliveryPreference?: string; requestId?: string }) {
   const { cart } = await ownedCart(scope, input.cartId, input.customerId)
   await assertCartMutable(scope, cart)
-  if (!input.termsVersion.trim()) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Current terms acceptance is required")
+  if (input.termsVersion !== CURRENT_TERMS_VERSION || input.privacyVersion !== CURRENT_PRIVACY_VERSION) throw new MedusaError(MedusaError.Types.CONFLICT, "Please accept the current Terms and Privacy Policy")
   const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
   const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
   if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
-  const requestedDeliveryDate = normalizeRequestedDeliveryDate(input.requestedDeliveryDate)
-  const metadata = { ...(cart.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate, termsVersion: input.termsVersion, privacyVersion: input.privacyVersion, acceptedAt: new Date().toISOString() } }
+  const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
+  const metadata = { ...(cart.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, acceptedAt: new Date().toISOString() } }
   const updated = await cartService(scope).updateCarts(cart.id, { email: input.email.trim().toLowerCase(), shipping_address: shipping, billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } }, metadata })
-  await service(scope).createTermsAcceptances({ customer_id: input.customerId, order_id: null, terms_version: input.termsVersion, privacy_version: input.privacyVersion ?? null, accepted_at: new Date(), request_id: input.requestId ?? null })
+  const cartRevisionHash = await getCartRevisionHash(scope, input.cartId)
+  await service(scope).createTermsAcceptances({ customer_id: input.customerId, cart_id: input.cartId, cart_revision_hash: cartRevisionHash, order_id: null, terms_version: CURRENT_TERMS_VERSION, privacy_version: CURRENT_PRIVACY_VERSION, terms_content_hash: CURRENT_TERMS_CONTENT_HASH, privacy_content_hash: CURRENT_PRIVACY_CONTENT_HASH, accepted_at: new Date(), request_id: input.requestId ?? null })
   return updated
 }
 
@@ -286,7 +291,7 @@ export async function saveCheckoutDetails(scope: Scope, input: { cartId: string;
   const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
   const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
   if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
-  const requestedDeliveryDate = normalizeRequestedDeliveryDate(input.requestedDeliveryDate)
+  const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
   const previous = asRecord(cart.metadata?.garmops_checkout)
   const metadata = {
     ...(cart.metadata ?? {}),
@@ -304,4 +309,22 @@ export async function saveCheckoutDetails(scope: Scope, input: { cartId: string;
     billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } },
     metadata,
   })
+}
+
+async function checkoutExtraLeadTime(scope: Scope, cartId: string): Promise<number> {
+  const lines = await service(scope).listConfiguredCartLines({ cart_id: cartId })
+  for (const line of lines) {
+    const version = await service(scope).retrieveDesignVersion(line.version_id)
+    if (extraLeadTimeForConfiguration(version.configuration) > 0) return extraLeadTimeForConfiguration(version.configuration)
+  }
+  return 0
+}
+
+export async function getCartRevisionHash(scope: Scope, cartId: string): Promise<string> {
+  const cart = await cartService(scope).retrieveCart(cartId, { relations: ["items", "shipping_address", "billing_address"] })
+  const profile = (await service(scope).listCartProfiles({ cart_id: cartId }))[0]
+  const lines = await service(scope).listConfiguredCartLines({ cart_id: cartId }, { order: { created_at: "ASC" } })
+  const checkout = asRecord(cart.metadata?.garmops_checkout)
+  const revision = { cartId, cartType: profile?.cart_type, items: (cart.items ?? []).map((item) => ({ id: item.id, quantity: item.quantity, metadata: item.metadata })), lines: lines.map((line) => ({ id: line.id, versionId: line.version_id, projectId: line.project_id, productSlug: line.product_slug, quantity: line.quantity, sizeBreakdown: line.size_breakdown, deliveryType: line.delivery_type })), shipping: cart.shipping_address, billing: cart.billing_address, checkout: { ...checkout, termsVersion: undefined, privacyVersion: undefined, acceptedAt: undefined } }
+  return fingerprint(JSON.parse(canonicalJson(revision)))
 }

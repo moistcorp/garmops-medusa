@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto"
 import { formatPaiseAsRupees, createCommandHash, createPaymentRequestHash } from "./security"
 import { testState } from "../../integrations/test-doubles"
 
-type Options = { key?: string; salt?: string; environment?: "test" | "live"; callbackUrl?: string }
+type Options = { key?: string; salt?: string; environment?: "test" | "live"; callbackUrl?: string; browserReturnUrl?: string }
 export class PayuPaymentProvider implements IPaymentProvider {
   static identifier = "payu"
   private readonly options: Options
@@ -33,8 +33,9 @@ export class PayuPaymentProvider implements IPaymentProvider {
     const firstname = String(input.context?.customer?.first_name ?? "Customer")
     const email = String(input.context?.customer?.email ?? data.email ?? "")
     const productinfo = String(data.productinfo ?? "Garmops order").slice(0, 200)
-    const callbackUrl = this.options.callbackUrl ?? process.env.PAYU_CALLBACK_URL
-    const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, ...(callbackUrl ? { surl: callbackUrl, furl: callbackUrl } : {}), hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
+    const browserReturnUrl = this.options.browserReturnUrl ?? process.env.PAYU_BROWSER_RETURN_URL ?? (process.env.NODE_ENV === "test" ? this.options.callbackUrl : undefined)
+    if (!browserReturnUrl) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU browser return URL is not configured")
+    const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, surl: browserReturnUrl, furl: browserReturnUrl, hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
     return { id: txnid, status: "pending", data: { provider: "payu", environment, checkoutUrl: environment === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment", fields } }
   }
   async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> { return { status: "pending", data: { ...(input.data ?? {}), amount: String(input.amount), currency_code: input.currency_code } } }
