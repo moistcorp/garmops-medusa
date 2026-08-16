@@ -15,6 +15,7 @@ x-backend-environment: &backend-environment
   ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9000}
   AUTH_CORS: ${AUTH_CORS:-http://localhost:3000,http://localhost:3001,http://localhost:9000}
   MEDUSA_BACKEND_URL: ${MEDUSA_PUBLIC_URL:-http://localhost:9000}
+  FRONTEND_URL: ${FRONTEND_URL:-${CUSTOMER_APP_URL:-http://localhost:3000}}
   PAYU_ENV: ${PAYU_ENV:-${PAYU_ENVIRONMENT:-test}}
   PAYU_KEY: ${PAYU_KEY:-${PAYU_MERCHANT_KEY:-}}
   PAYU_SALT: ${PAYU_SALT:-}
