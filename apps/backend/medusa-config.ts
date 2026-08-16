@@ -1,7 +1,10 @@
 import { loadEnv, defineConfig, Modules, ContainerRegistrationKeys } from '@medusajs/framework/utils'
 import { GARMOPS_MODULE } from './src/modules/garmops'
+import { validateProductionEnvironment } from './src/config/production'
 
 loadEnv(process.env.NODE_ENV || 'development', process.cwd())
+validateProductionEnvironment()
+const isProduction = process.env.NODE_ENV === 'production'
 
 const databaseSslMode = process.env.DATABASE_SSL_MODE?.trim().toLowerCase()
 const databaseDriverOptions = databaseSslMode === 'disable'
@@ -51,11 +54,11 @@ module.exports = defineConfig({
       resolve: '@medusajs/medusa/auth',
       dependencies: [Modules.CACHE, Modules.CUSTOMER, GARMOPS_MODULE, ContainerRegistrationKeys.LOGGER],
       options: {
-        mfa: { encryption_key: process.env.AUTH_MFA_ENCRYPTION_KEY || process.env.JWT_SECRET || 'development-only-mfa-key' },
+        mfa: { encryption_key: process.env.AUTH_MFA_ENCRYPTION_KEY || (isProduction ? undefined : process.env.JWT_SECRET || 'development-only-mfa-key') },
         providers: [
           { resolve: '@medusajs/medusa/auth-emailpass', id: 'emailpass' },
           { resolve: './src/providers/email-otp', id: 'emailotp' },
-          { resolve: './src/providers/customer-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || 'not-configured', clientSecret: process.env.GOOGLE_CLIENT_SECRET || 'not-configured', callbackUrl: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/callback' } },
+          { resolve: './src/providers/customer-google', id: 'google', options: { clientId: process.env.GOOGLE_CLIENT_ID || (isProduction ? undefined : 'not-configured'), clientSecret: process.env.GOOGLE_CLIENT_SECRET || (isProduction ? undefined : 'not-configured'), callbackUrl: process.env.GOOGLE_CALLBACK_URL || (isProduction ? undefined : 'http://localhost:3000/auth/callback') } },
         ],
       },
     },
@@ -67,7 +70,7 @@ module.exports = defineConfig({
       resolve: '@medusajs/medusa/payment',
       options: {
         providers: [
-          { resolve: './src/providers/payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV || 'test', callbackUrl: process.env.PAYU_CALLBACK_URL } },
+          { resolve: './src/providers/payu', options: { key: process.env.PAYU_KEY, salt: process.env.PAYU_SALT, environment: process.env.PAYU_ENV as 'test' | 'live' | undefined, callbackUrl: process.env.PAYU_CALLBACK_URL } },
         ],
       },
     },

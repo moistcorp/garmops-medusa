@@ -3,6 +3,7 @@ import { createStep, createWorkflow, StepResponse, WorkflowResponse } from "@med
 import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 import { approveStoredFile } from "../services/file-scan"
+import { aggregateArtworkReviewStatus, requiredArtworkFileIds, type ArtworkReviewStatus } from "../domain/artwork"
 
 type Container = { resolve<T>(key: string): T }
 
@@ -59,18 +60,29 @@ export const verifyGarmopsOtpWorkflow = createWorkflow("verify-garmops-otp", (in
 
 const reviewArtworkStep = createStep("review-artwork", async (input: { fileId: string; decision: "approve" | "reject"; actorId: string; requestId?: string; productionJobId?: string }, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
+  const job = input.productionJobId ? await service.retrieveProductionJob(input.productionJobId) : null
+  if (job && input.decision === "approve" && !["payment_confirmed", "order_review", "artwork_pending"].includes(job.status)) throw new MedusaError(MedusaError.Types.CONFLICT, "Artwork cannot be approved at the current production stage")
   const file = input.decision === "approve"
     ? await approveStoredFile(container, input.fileId)
     : await service.updateStoredFiles({ id: input.fileId, state: "rejected", metadata: { reviewStatus: "rejected", reviewedAt: new Date().toISOString() } })
-  await service.createAuditLogs({ actor_type: "staff", actor_id: input.actorId, action: `artwork_${input.decision}`, resource_type: "stored_file", resource_id: input.fileId, request_id: input.requestId ?? null, before_snapshot: null, after_snapshot: { reviewStatus: input.decision === "approve" ? "approved" : "rejected" }, metadata: null })
-  if (input.productionJobId) {
-    const job = await service.retrieveProductionJob(input.productionJobId)
+  await service.createAuditLogs({ actor_type: "staff", actor_id: input.actorId, action: `artwork_${input.decision}`, resource_type: "order_artwork", resource_id: job ? `${job.order_id}:${input.fileId}` : input.fileId, request_id: input.requestId ?? null, before_snapshot: null, after_snapshot: { orderId: job?.order_id ?? null, fileId: input.fileId, decision: input.decision, reviewStatus: input.decision === "approve" ? "approved" : "rejected" }, metadata: null })
+  if (job) {
+    const snapshots = await service.listOrderConfigurationSnapshots({ order_id: job.order_id })
+    const requiredFileIds = requiredArtworkFileIds(snapshots)
+    const reviewStatuses: ArtworkReviewStatus[] = []
+    for (const requiredFileId of requiredFileIds) {
+      const requiredFile = await service.retrieveStoredFile(requiredFileId)
+      const status = (requiredFile.metadata as Record<string, unknown> | null)?.reviewStatus
+      reviewStatuses.push(status === "approved" ? "approved" : status === "rejected" ? "rejected" : "pending")
+    }
+    const aggregate = aggregateArtworkReviewStatus(reviewStatuses)
     if (input.decision === "approve") {
-      if (!["payment_confirmed", "order_review", "artwork_pending"].includes(job.status)) throw new MedusaError(MedusaError.Types.CONFLICT, "Artwork cannot be approved at the current production stage")
-      await service.updateProductionJobs({ id: job.id, status: "artwork_approved", artwork_review_status: "approved" })
-      await service.createProductionStatusHistories({ production_job_id: job.id, from_status: job.status, to_status: "artwork_approved", actor_id: input.actorId, request_id: input.requestId ?? null, reason: "Dedicated artwork approval" })
+      if (aggregate === "approved" && requiredFileIds.length > 0) {
+        await service.updateProductionJobs({ id: job.id, status: "artwork_approved", artwork_review_status: "approved" })
+        await service.createProductionStatusHistories({ production_job_id: job.id, from_status: job.status, to_status: "artwork_approved", actor_id: input.actorId, request_id: input.requestId ?? null, reason: "All frozen artwork files approved" })
+      } else await service.updateProductionJobs({ id: job.id, artwork_review_status: aggregate })
     } else {
-      await service.updateProductionJobs({ id: job.id, artwork_review_status: "rejected" })
+      await service.updateProductionJobs({ id: job.id, artwork_review_status: aggregate === "approved" ? "pending" : aggregate })
     }
   }
   return new StepResponse(file)

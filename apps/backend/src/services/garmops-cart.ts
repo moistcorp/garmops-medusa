@@ -5,6 +5,7 @@ import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 import { findCatalogProduct, PRINT_TECHNIQUES, REFLECTIVE_COLOURS } from "../domain/catalog"
 import { priceConfiguredLine, samplePrice, validateConfiguredLine, type PricingSnapshot } from "../domain/pricing"
+import { paymentLockIsActive } from "../domain/payment"
 
 type Scope = Pick<MedusaContainer, "resolve">
 type CartService = ICartModuleService
@@ -60,12 +61,16 @@ export async function ownedCart(scope: Scope, cartId: string, customerId: string
   return { cart, profile }
 }
 
-function assertCartMutable(cart: { completed_at?: Date | string | null }): void {
+async function assertCartMutable(scope: Scope, cart: { id: string; completed_at?: Date | string | null; metadata?: unknown }): Promise<void> {
   if (cart.completed_at) throw new MedusaError(MedusaError.Types.CONFLICT, "Completed carts are immutable")
   const attempt = asRecord((cart as { metadata?: unknown }).metadata).garmops_payment_attempt
   if (asRecord(attempt).status === "active") {
-    const expiresAt = Date.parse(String(asRecord(attempt).expiresAt ?? ""))
-    if (!Number.isFinite(expiresAt) || expiresAt > Date.now()) throw new MedusaError(MedusaError.Types.CONFLICT, "Cart is locked while a payment attempt is active")
+    const expiresAt = String(asRecord(attempt).expiresAt ?? "")
+    if (paymentLockIsActive(expiresAt)) throw new MedusaError(MedusaError.Types.CONFLICT, "Cart is locked while a payment attempt is active")
+    const attemptId = asRecord(attempt).id
+    if (typeof attemptId === "string") await service(scope).invalidatePaymentAttempt({ id: attemptId, reason: "Cart payment lock expired before mutation" })
+    const cartServiceMetadata = asRecord(cart.metadata)
+    await cartService(scope).updateCarts(cart.id, { metadata: { ...cartServiceMetadata, garmops_payment_attempt: { ...asRecord(attempt), status: "invalidated", invalidatedAt: new Date().toISOString() } } })
   }
 }
 
@@ -152,7 +157,7 @@ function nativeLineData(input: { product: { slug: string; name: string; technica
 
 export async function addConfiguredLine(scope: Scope, input: { cartId: string; customerId: string; projectId: string; versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
   const { cart, profile } = await ownedCart(scope, input.cartId, input.customerId, "configured")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   const validated = await validateConfiguredInput(scope, input)
   const item = (await cartService(scope).addLineItems({ cart_id: cart.id, ...nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }) }))[0]
   const line = await service(scope).createConfiguredCartLines({ cart_id: cart.id, line_item_id: item.id, customer_id: input.customerId, project_id: validated.project.id, version_id: validated.version.id, product_slug: validated.product.slug, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
@@ -162,7 +167,7 @@ export async function addConfiguredLine(scope: Scope, input: { cartId: string; c
 export async function updateConfiguredLine(scope: Scope, input: { lineId: string; customerId: string; versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
   const line = await service(scope).retrieveConfiguredCartLine(input.lineId)
   const { cart } = await ownedCart(scope, line.cart_id, input.customerId, "configured")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   const validated = await validateConfiguredInput(scope, { customerId: input.customerId, projectId: line.project_id, versionId: input.versionId ?? line.version_id, quantity: input.quantity, sizes: input.sizes, sizeBreakdown: input.sizeBreakdown, deliveryType: input.deliveryType, configuration: input.configuration })
   if (!line.line_item_id) throw new MedusaError(MedusaError.Types.CONFLICT, "Configured line is missing its native cart line")
   await cartService(scope).updateLineItems(line.line_item_id, nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }))
@@ -173,14 +178,14 @@ export async function updateConfiguredLine(scope: Scope, input: { lineId: string
 export async function removeConfiguredLine(scope: Scope, lineId: string, customerId: string) {
   const line = await service(scope).retrieveConfiguredCartLine(lineId)
   const { cart } = await ownedCart(scope, line.cart_id, customerId, "configured")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   if (line.line_item_id) await cartService(scope).deleteLineItems(line.line_item_id)
   await service(scope).deleteConfiguredCartLines(line.id)
 }
 
 export async function addSampleLine(scope: Scope, input: { cartId: string; customerId: string; productSlug: string; size: string; quantity: number }) {
   const { cart, profile } = await ownedCart(scope, input.cartId, input.customerId, "sample")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   const pricing = samplePrice(input.productSlug, input.size, input.quantity)
   const product = findCatalogProduct(input.productSlug)
   if (!product) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
@@ -197,7 +202,7 @@ export async function addSampleLine(scope: Scope, input: { cartId: string; custo
 export async function updateSampleLine(scope: Scope, input: { lineId: string; customerId: string; productSlug?: string; size?: string; quantity?: number }) {
   const item = await cartService(scope).retrieveLineItem(input.lineId)
   const { cart } = await ownedCart(scope, String(item.cart_id), input.customerId, "sample")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   const metadata = asRecord(item.metadata)
   if (metadata.garmops_sample !== true) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Sample line not found")
   const productSlug = input.productSlug ?? String(metadata.garmops_sample_product_slug ?? "")
@@ -212,7 +217,7 @@ export async function updateSampleLine(scope: Scope, input: { lineId: string; cu
 export async function removeSampleLine(scope: Scope, lineId: string, customerId: string) {
   const item = await cartService(scope).retrieveLineItem(lineId)
   const { cart } = await ownedCart(scope, String(item.cart_id), customerId, "sample")
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   await cartService(scope).deleteLineItems(lineId)
 }
 
@@ -254,7 +259,7 @@ export async function summarizeCart(scope: Scope, cartId: string, customerId: st
 
 export async function saveCheckout(scope: Scope, input: { cartId: string; customerId: string; email: string; projectName?: string; orderNotes?: string; gstin?: string; billingEntity?: string; shippingAddress: unknown; billingAddress?: unknown; termsVersion: string; privacyVersion?: string; requestedDeliveryDate?: string; deliveryPreference?: string; requestId?: string }) {
   const { cart } = await ownedCart(scope, input.cartId, input.customerId)
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   if (!input.termsVersion.trim()) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Current terms acceptance is required")
   const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
   const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
@@ -277,7 +282,7 @@ export function normalizeRequestedDeliveryDate(value: unknown): string | undefin
 
 export async function saveCheckoutDetails(scope: Scope, input: { cartId: string; customerId: string; email: string; shippingAddress: unknown; billingAddress?: unknown; gstin?: string; billingEntity?: string; requestedDeliveryDate?: string; deliveryPreference?: string }) {
   const { cart } = await ownedCart(scope, input.cartId, input.customerId)
-  assertCartMutable(cart)
+  await assertCartMutable(scope, cart)
   const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
   const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
   if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")

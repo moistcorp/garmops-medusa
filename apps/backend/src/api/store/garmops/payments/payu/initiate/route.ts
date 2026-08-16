@@ -27,6 +27,11 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
       const existingSession = await req.scope.resolve<any>(Modules.PAYMENT).retrievePaymentSession(sessionId)
       return res.status(201).json({ paymentCollectionId: existingSession.payment_collection_id, paymentSession: existingSession, amountPaise: Number(existingAttempt.expectedAmountPaise), requestId: req.requestId })
     }
+    if (existingAttempt.status === "active") {
+      const existingAttemptId = existingAttempt.id
+      if (typeof existingAttemptId === "string") await service.invalidatePaymentAttempt({ id: existingAttemptId, reason: "Payment lock expired before a new attempt was initiated" })
+      await cartService.updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { ...existingAttempt, status: "invalidated", invalidatedAt: new Date().toISOString() } } })
+    }
     const lines = await service.listConfiguredCartLines({ cart_id: cartId })
     let authoritativeTotal = 0
     if (profile.cart_type === "configured") {
@@ -53,9 +58,13 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     const sessionFields = (sessionData.fields ?? {}) as Record<string, unknown>
     const providerTransactionId = String(sessionData.txnid ?? sessionFields.txnid ?? "")
     if (!providerTransactionId || !session?.id) throw new MedusaError(MedusaError.Types.CONFLICT, "PayU did not return a payment transaction")
-    const revisionHash = createHash("sha256").update(JSON.stringify({ cartId, authoritativeTotal, lines: lines.map((line) => ({ id: line.id, versionId: line.version_id, quantity: line.quantity, sizes: line.size_breakdown, pricing: line.pricing_snapshot })), checkout: cart.metadata?.garmops_checkout ?? null })).digest("hex")
-    await service.recordPaymentEvent({ providerEventId: `payu-init-${providerTransactionId}`, providerTransactionId, paymentSessionId: String(session.id), cartId, eventType: "initiated", status: "initiated", amountPaise: authoritativeTotal, payloadHash: revisionHash })
-    await cartService.updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { providerTransactionId, paymentSessionId: String(session.id), cartId, customerId: actorId, expectedAmountPaise: authoritativeTotal, revisionHash, status: "active", expiresAt: new Date(Date.now() + 30 * 60_000).toISOString() } } })
+    const snapshot = { cartId, cartType: profile.cart_type, amountPaise: authoritativeTotal, configuredLines: lines.map((line) => ({ id: line.id, lineItemId: line.line_item_id, projectId: line.project_id, versionId: line.version_id, productSlug: line.product_slug, quantity: line.quantity, sizes: line.size_breakdown, pricing: line.pricing_snapshot })), sampleItems: (cart.items ?? []).map((item) => ({ id: item.id, quantity: item.quantity, metadata: item.metadata })), checkout: cart.metadata?.garmops_checkout ?? null }
+    const revisionHash = createHash("sha256").update(JSON.stringify(snapshot)).digest("hex")
+    const expiresAt = new Date(Date.now() + 30 * 60_000)
+    const attempt = await service.createPaymentAttempts({ provider: "payu", cart_id: cartId, customer_id: actorId, payment_session_id: String(session.id), provider_transaction_id: providerTransactionId, expected_amount_paise: authoritativeTotal, cart_revision_hash: revisionHash, snapshot, status: "active", expires_at: expiresAt, invalidated_at: null, completed_at: null, last_error: null })
+    const eventPayloadHash = createHash("sha256").update(JSON.stringify({ providerTransactionId, paymentSessionId: String(session.id), amountPaise: authoritativeTotal, source: "initiation" })).digest("hex")
+    await service.recordPaymentEvent({ providerEventId: `payu-init-${providerTransactionId}`, providerTransactionId, paymentSessionId: String(session.id), cartId, eventType: "initiated", status: "initiated", amountPaise: authoritativeTotal, eventPayloadHash })
+    await cartService.updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { id: attempt.id, providerTransactionId, paymentSessionId: String(session.id), cartId, customerId: actorId, expectedAmountPaise: authoritativeTotal, revisionHash, cartRevisionHash: revisionHash, status: "active", expiresAt: expiresAt.toISOString() } } })
     res.status(201).json({ paymentCollectionId: result.collectionId, paymentSession: result.session, amountPaise: authoritativeTotal, requestId: req.requestId })
   } catch (error) {
     res.status(400).json({ code: "PAYMENT_INITIATION_FAILED", message: error instanceof Error ? error.message : "Payment could not be initiated", requestId: req.requestId })

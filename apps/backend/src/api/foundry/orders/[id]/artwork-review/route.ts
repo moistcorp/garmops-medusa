@@ -3,6 +3,7 @@ import { GARMOPS_MODULE } from "../../../../../modules/garmops"
 import type GarmopsModuleService from "../../../../../modules/garmops/service"
 import { hasStaffPermission } from "../../../../../auth/staff"
 import { reviewGarmopsArtworkWorkflow } from "../../../../../workflows/garmops-mutations"
+import { requiredArtworkFileIds } from "../../../../../domain/artwork"
 
 export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse) {
   const service = req.scope.resolve<GarmopsModuleService>(GARMOPS_MODULE)
@@ -13,7 +14,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
     const job = await service.retrieveProductionJob(req.params.id)
     const fileRecord = await service.retrieveStoredFile(body.fileId)
     const snapshots = await service.listOrderConfigurationSnapshots({ order_id: job.order_id })
-    const targetBelongsToOrder = fileRecord.order_id === job.order_id || snapshots.some((snapshot) => snapshot.project_id === fileRecord.project_id)
+    const targetBelongsToOrder = requiredArtworkFileIds(snapshots).includes(fileRecord.id)
     if (!targetBelongsToOrder) return res.status(404).json({ code: "ARTWORK_NOT_FOUND", message: "Artwork is not attached to this order", requestId: req.requestId })
     if (body.decision === "approve" && !["payment_confirmed", "order_review", "artwork_pending"].includes(job.status)) return res.status(409).json({ code: "ARTWORK_NOT_REVIEWABLE", message: "Artwork cannot be approved at the current production stage", requestId: req.requestId })
     const { result: file } = await reviewGarmopsArtworkWorkflow(req.scope).run({ input: { fileId: body.fileId, decision: body.decision, actorId: req.auth_context?.actor_id ?? "", requestId: req.requestId, productionJobId: job.id } })

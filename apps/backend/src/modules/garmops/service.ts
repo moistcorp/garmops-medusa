@@ -1,11 +1,11 @@
 import { MedusaError, MedusaService } from "@medusajs/framework/utils"
 import {
-  AuditLog, CartProfile, CheckoutIdempotency, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, InvoiceNumberCounter, NotificationEvent, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentEvent, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, StoredFile, TermsAcceptance,
+  AuditLog, CartProfile, CheckoutIdempotency, ConfiguredCartLine, DesignProject, DesignVersion, Invoice, InvoiceNumberCounter, NotificationEvent, OtpChallenge, OrderConfigurationSnapshot, OrderNumberCounter, PaymentAttempt, PaymentEvent, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, StoredFile, TermsAcceptance,
 } from "./models/models"
 import { createHash, randomInt, timingSafeEqual } from "node:crypto"
 import { ORDER_TRANSITIONS, type OrderStatus } from "../../domain/production"
 
-class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, CheckoutIdempotency, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
+class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion, ConfiguredCartLine, CartProfile, CheckoutIdempotency, OrderConfigurationSnapshot, StoredFile, ProductionJob, ProductionStatusHistory, RefundRequest, StaffMember, PaymentAttempt, PaymentEvent, Invoice, InvoiceNumberCounter, NotificationEvent, TermsAcceptance, AuditLog, OtpChallenge, OrderNumberCounter }) {
   updateOrderConfigurationSnapshots = async (): Promise<never> => {
     throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Order configuration snapshots are immutable")
   }
@@ -90,14 +90,14 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
     return `INV-${year}-${String(sequence).padStart(6, "0")}`
   }
 
-  async recordPaymentEvent(input: { providerEventId: string; providerTransactionId: string; paymentId?: string; paymentSessionId?: string; cartId?: string; orderId?: string; eventType: string; status: string; amountPaise?: number; payloadHash: string }) {
+  async recordPaymentEvent(input: { providerEventId: string; providerTransactionId: string; paymentId?: string; paymentSessionId?: string; cartId?: string; orderId?: string; eventType: string; status: string; amountPaise?: number; eventPayloadHash: string }) {
     const existing = (await this.listPaymentEvents({ provider_transaction_id: input.providerTransactionId }))[0] ?? (await this.listPaymentEvents({ provider_event_id: input.providerEventId }))[0]
     if (existing) {
-      if (existing.payload_hash !== input.payloadHash) await this.updatePaymentEvents({ id: existing.id, event_type: input.eventType, payload_hash: input.payloadHash })
+      if (existing.event_payload_hash !== input.eventPayloadHash || existing.event_type !== input.eventType || (input.paymentId && existing.payment_id !== input.paymentId)) await this.updatePaymentEvents({ id: existing.id, event_type: input.eventType, event_payload_hash: input.eventPayloadHash, payment_id: input.paymentId ?? existing.payment_id })
       return { event: existing, duplicate: true }
     }
     try {
-      const event = await this.createPaymentEvents({ provider: "payu", provider_event_id: input.providerEventId, provider_transaction_id: input.providerTransactionId, payment_id: input.paymentId ?? null, payment_session_id: input.paymentSessionId ?? null, cart_id: input.cartId ?? null, order_id: input.orderId ?? null, event_type: input.eventType, status: input.status, amount_paise: input.amountPaise ?? null, payload_hash: input.payloadHash, processed_at: null, last_error: null })
+      const event = await this.createPaymentEvents({ provider: "payu", provider_event_id: input.providerEventId, provider_transaction_id: input.providerTransactionId, payment_id: input.paymentId ?? null, payment_session_id: input.paymentSessionId ?? null, cart_id: input.cartId ?? null, order_id: input.orderId ?? null, event_type: input.eventType, status: input.status, amount_paise: input.amountPaise ?? null, payload_hash: null, event_payload_hash: input.eventPayloadHash, processed_at: null, last_error: null })
       return { event, duplicate: false }
     } catch (error) {
       // Two callback/webhook deliveries can pass the read-before-create check
@@ -110,6 +110,12 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
 
   async markPaymentEvent(input: { id: string; status: string; orderId?: string; error?: string }) {
     return this.updatePaymentEvents({ id: input.id, status: input.status, order_id: input.orderId ?? null, last_error: input.error ?? null, processed_at: input.status === "completed" ? new Date() : null })
+  }
+
+  async invalidatePaymentAttempt(input: { id: string; reason?: string }) {
+    const attempt = await this.retrievePaymentAttempt(input.id)
+    if (["invalidated", "completed", "failed", "expired", "reconciliation_required"].includes(attempt.status)) return attempt
+    return this.updatePaymentAttempts({ id: attempt.id, status: "invalidated", invalidated_at: new Date(), last_error: input.reason ?? null })
   }
 }
 
