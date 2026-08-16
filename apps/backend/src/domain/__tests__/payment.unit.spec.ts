@@ -1,4 +1,4 @@
-import { paymentCallbackDisposition, paymentLockIsActive } from "../payment"
+import { paymentCallbackDisposition, paymentLockIsActive, publicPaymentStatus } from "../payment"
 
 describe("PayU payment attempt integrity", () => {
   it("distinguishes an active lock from an expired lock", () => {
@@ -11,5 +11,12 @@ describe("PayU payment attempt integrity", () => {
     expect(paymentCallbackDisposition(input)).toBe("reconcile")
     expect(paymentCallbackDisposition({ ...input, attemptStatus: "invalidated", currentCartRevisionHash: "revision-a" })).toBe("reconcile")
     expect(paymentCallbackDisposition({ ...input, currentCartRevisionHash: "revision-a" })).toBe("complete")
+  })
+
+  it("maps explicit provider and artifact states without inferring success from an order id", () => {
+    expect(publicPaymentStatus({ eventStatus: "initiated", orderId: "order_1" })).toBe("payment_pending")
+    expect(publicPaymentStatus({ eventStatus: "failed", orderId: "order_1" })).toBe("payment_failed")
+    expect(publicPaymentStatus({ eventStatus: "artifact_pending", orderId: "order_1" })).toBe("artifact_pending")
+    expect(publicPaymentStatus({ eventStatus: "completed", orderId: "order_1" })).toBe("order_complete")
   })
 })

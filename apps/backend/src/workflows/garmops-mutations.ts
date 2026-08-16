@@ -55,7 +55,8 @@ export const createGarmopsStoredFileWorkflow = createWorkflow("create-garmops-st
 
 const verifyOtpStep = createStep("verify-otp", async (input: { challengeId: string; code: string }, { container }) => {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
-  const challenge = await service.consumeOtp(input.challengeId, input.code)
+  const locking = container.resolve<ILockingModule>(Modules.LOCKING)
+  const challenge = await locking.execute(`otp-challenge:${input.challengeId}`, () => service.consumeOtp(input.challengeId, input.code), { timeout: 30 })
   const customerService = container.resolve<any>(Modules.CUSTOMER)
   const customer = (await customerService.listCustomers({ email: challenge.email }))[0] ?? await customerService.createCustomers({ email: challenge.email, metadata: { authSource: "email_otp" } })
   return new StepResponse(customer)

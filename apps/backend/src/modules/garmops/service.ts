@@ -54,7 +54,19 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
 
   async createImmutableSnapshot(input: { orderId: string; productSlug: string; quantity: number; sizeBreakdown: Record<string, number>; snapshot: Record<string, unknown>; pricingSnapshot: Record<string, unknown>; lineItemId?: string; lineNumber: number; customerId?: string; projectId?: string; versionId?: string }) {
     const immutableHash = createHash("sha256").update(JSON.stringify({ productSlug: input.productSlug, quantity: input.quantity, sizeBreakdown: input.sizeBreakdown, snapshot: input.snapshot, pricingSnapshot: input.pricingSnapshot })).digest("hex")
-    return this.createOrderConfigurationSnapshots({ order_id: input.orderId, product_slug: input.productSlug, quantity: input.quantity, size_breakdown: input.sizeBreakdown, snapshot: input.snapshot, pricing_snapshot: input.pricingSnapshot, immutable_hash: immutableHash, line_item_id: input.lineItemId ?? null, line_number: input.lineNumber, customer_id: input.customerId ?? null, project_id: input.projectId ?? null, version_id: input.versionId ?? null })
+    const existing = input.lineItemId
+      ? (await this.listOrderConfigurationSnapshots({ order_id: input.orderId, line_item_id: input.lineItemId }, { take: 1 }))[0]
+      : (await this.listOrderConfigurationSnapshots({ order_id: input.orderId, line_number: input.lineNumber }, { take: 1 }))[0]
+    if (existing) return existing
+    try {
+      return await this.createOrderConfigurationSnapshots({ order_id: input.orderId, product_slug: input.productSlug, quantity: input.quantity, size_breakdown: input.sizeBreakdown, snapshot: input.snapshot, pricing_snapshot: input.pricingSnapshot, immutable_hash: immutableHash, line_item_id: input.lineItemId ?? null, line_number: input.lineNumber, customer_id: input.customerId ?? null, project_id: input.projectId ?? null, version_id: input.versionId ?? null })
+    } catch (error) {
+      const concurrent = input.lineItemId
+        ? (await this.listOrderConfigurationSnapshots({ order_id: input.orderId, line_item_id: input.lineItemId }, { take: 1 }))[0]
+        : (await this.listOrderConfigurationSnapshots({ order_id: input.orderId, line_number: input.lineNumber }, { take: 1 }))[0]
+      if (concurrent) return concurrent
+      throw error
+    }
   }
 
   async transitionProduction(input: { jobId: string; target: OrderStatus; actorId?: string; requestId?: string; reason?: string }) {
@@ -130,6 +142,15 @@ class GarmopsModuleService extends MedusaService({ DesignProject, DesignVersion,
 
   async markPaymentEvent(input: { id: string; status: string; orderId?: string; error?: string }) {
     return this.updatePaymentEvents({ id: input.id, status: input.status, order_id: input.orderId ?? null, last_error: input.error ?? null, processed_at: input.status === "completed" ? new Date() : null })
+  }
+
+  async schedulePaymentReconciliationRetry(input: { id: string; error: string; maxRetries?: number }) {
+    const event = await this.retrievePaymentEvent(input.id)
+    const retryCount = Number(event.retry_count ?? 0) + 1
+    const maxRetries = input.maxRetries ?? 5
+    if (retryCount >= maxRetries) return this.updatePaymentEvents({ id: event.id, status: "manual_review", retry_count: retryCount, next_attempt_at: null, last_error: input.error, processed_at: null })
+    const backoffMs = Math.min(60 * 60_000, 60_000 * 2 ** (retryCount - 1))
+    return this.updatePaymentEvents({ id: event.id, status: "artifact_pending", retry_count: retryCount, next_attempt_at: new Date(Date.now() + backoffMs), last_error: input.error, processed_at: null })
   }
 
   async invalidatePaymentAttempt(input: { id: string; reason?: string }) {

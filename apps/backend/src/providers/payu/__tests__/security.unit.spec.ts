@@ -8,7 +8,7 @@ describe("PayU security", () => {
     expect(parseRupeesToPaise("123.456")).toBeNull()
   })
   it("creates a response hash that validates with the same salt", () => {
-    const base = { key: "merchant", txnid: "txn-1", amount: "535.00", productinfo: "Order", firstname: "A", email: "a@example.com", udf1: "", udf2: "", udf3: "", udf4: "", udf5: "", salt: "secret" }
+    const base = { key: "merchant", txnid: "txn-1", amount: "535.00", productinfo: "Order", firstname: "A", email: "a@example.com", phone: "9876543210", udf1: "cart-1", udf2: "", udf3: "", udf4: "", udf5: "test", surl: "https://example.test/success", furl: "https://example.test/failure", salt: "secret" }
     const requestHash = createPaymentRequestHash(base)
     expect(requestHash).toHaveLength(128)
     const fields = { ...base, status: "success", hash: "" }

@@ -12,7 +12,8 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   try {
     const refund = await requestPayuRefund(req.scope, { paymentId: req.params.id, amountPaise: body.amountPaise, idempotencyKey: body.idempotencyKey, actorId: req.auth_context?.actor_id ?? "" })
     res.status(201).json({ refund, requestId: req.requestId })
-  } catch {
-    res.status(409).json({ code: "REFUND_FAILED", message: "Refund could not be submitted", requestId: req.requestId })
+  } catch (error) {
+    if (error instanceof Error && error.message === "IDEMPOTENCY_KEY_REUSED") return res.status(409).json({ code: "IDEMPOTENCY_KEY_REUSED", message: "This idempotency key was already used for a different refund", requestId: req.requestId })
+    res.status(409).json({ code: "REFUND_FAILED", message: error instanceof Error ? error.message : "Refund could not be submitted", requestId: req.requestId })
   }
 }

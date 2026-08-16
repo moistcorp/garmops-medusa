@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from "node:crypto"
 import { MedusaError } from "@medusajs/framework/utils"
+import { formatMedusaAmountForPayu, medusaAmountToPaise } from "../../domain/money"
 
 export function parsePaiseAmount(value: unknown): number | null {
   let candidate = value
@@ -16,6 +17,7 @@ export function formatPaiseAsRupees(paise: unknown): string {
   if (parsedPaise === null) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Invalid paise amount")
   return `${Math.floor(parsedPaise / 100)}.${String(parsedPaise % 100).padStart(2, "0")}`
 }
+export { formatMedusaAmountForPayu, medusaAmountToPaise }
 export function parseRupeesToPaise(value: unknown): number | null {
   if (typeof value !== "string" && typeof value !== "number") return null
   const match = /^(\d{1,12})(?:\.(\d{1,2}))?$/.exec(String(value).trim())
@@ -23,7 +25,8 @@ export function parseRupeesToPaise(value: unknown): number | null {
   const paise = Number(match[1]) * 100 + Number((match[2] ?? "").padEnd(2, "0"))
   return Number.isSafeInteger(paise) ? paise : null
 }
-export function createPaymentRequestHash(input: { key: string; txnid: string; amount: string; productinfo: string; firstname: string; email: string; udf1?: string; udf2?: string; udf3?: string; udf4?: string; udf5?: string; salt: string }): string {
+export type PayuRequestFields = { key: string; txnid: string; amount: string; productinfo: string; firstname: string; email: string; phone?: string; udf1?: string; udf2?: string; udf3?: string; udf4?: string; udf5?: string; surl?: string; furl?: string }
+export function createPaymentRequestHash(input: PayuRequestFields & { salt: string }): string {
   return createHash("sha512").update([input.key, input.txnid, input.amount, input.productinfo, input.firstname, input.email, input.udf1 ?? "", input.udf2 ?? "", input.udf3 ?? "", input.udf4 ?? "", input.udf5 ?? "", "", "", "", "", "", input.salt].join("|")).digest("hex")
 }
 export type PayuFields = { key: string; txnid: string; amount: string; productinfo: string; firstname: string; email: string; udf1?: string; udf2?: string; udf3?: string; udf4?: string; udf5?: string; status: string; hash: string; mihpayid?: string; unmappedstatus?: string; additional_charges?: string; additionalCharges?: string; splitInfo?: string }

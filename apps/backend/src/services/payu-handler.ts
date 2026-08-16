@@ -7,6 +7,7 @@ import type GarmopsModuleService from "../modules/garmops/service"
 import { completeVerifiedPayuPayment } from "./order-completion"
 import { parseRupeesToPaise, paymentEventFingerprint, verifyPaymentResponseHash, type PayuFields } from "../providers/payu/security"
 import { paymentCallbackDisposition, paymentLockIsActive } from "../domain/payment"
+import { medusaAmountToPaise } from "../domain/money"
 
 type PayuRequest = MedusaRequest & { scope: MedusaContainer; requestId?: string }
 
@@ -31,7 +32,7 @@ export async function processPayuEvent(req: PayuRequest, source: "callback" | "w
   if (!cartId || (sessionCartId !== undefined && String(sessionCartId) !== cartId) || (fields.udf1 !== undefined && String(fields.udf1) !== cartId)) return { status: 400, body: { code: "PAYU_CART_MISMATCH", message: "PayU transaction is not associated with this cart" } }
   const cart = await req.scope.resolve<any>(Modules.CART).retrieveCart(cartId)
   const amountPaise = parseRupeesToPaise(fields.amount)
-  if (amountPaise === null || amountPaise !== Number(session.amount) || amountPaise !== Number(attempt.expected_amount_paise)) return { status: 400, body: { code: "PAYU_AMOUNT_MISMATCH", message: "PayU amount does not match the authoritative payment session" } }
+  if (amountPaise === null || amountPaise !== medusaAmountToPaise(session.amount, "Payment session amount") || amountPaise !== Number(attempt.expected_amount_paise)) return { status: 400, body: { code: "PAYU_AMOUNT_MISMATCH", message: "PayU amount does not match the authoritative payment session" } }
   const payloadHash = createHash("sha256").update(JSON.stringify(fields)).digest("hex")
   let medusaPaymentId: string | undefined
   try {
@@ -68,7 +69,7 @@ export async function processPayuEvent(req: PayuRequest, source: "callback" | "w
     await service.updatePaymentAttempts({ id: attempt.id, status: "completed", completed_at: new Date() })
     return { status: 200, body: { accepted: true, verified: true, duplicate: recorded.duplicate, orderId: completed.order.id, orderNumber: completed.orderNumber } }
   } catch (error) {
-    await service.markPaymentEvent({ id: recorded.event.id, status: "artifact_pending", error: error instanceof Error ? error.message : "Order completion is pending retry" })
+    await service.schedulePaymentReconciliationRetry({ id: recorded.event.id, error: error instanceof Error ? error.message : "Order completion is pending retry", maxRetries: Number(process.env.PAYU_RECONCILIATION_MAX_RETRIES || 5) })
     return { status: 202, body: { accepted: true, verified: true, recoverable: true, message: "Payment verified; order completion is queued for retry" } }
   }
 }

@@ -10,15 +10,10 @@ import { randomUUID } from "node:crypto"
 import { injectTestFailure } from "../integrations/test-failures"
 import { getCartRevisionHash, normalizeRequestedDeliveryDate } from "./garmops-cart"
 import { CURRENT_PRIVACY_CONTENT_HASH, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_CONTENT_HASH, CURRENT_TERMS_VERSION } from "../domain/legal"
+import { medusaAmountToPaise } from "../domain/money"
 
 type AddressLike = { first_name?: string; last_name?: string; company?: string; address_1?: string; address_2?: string; city?: string; postal_code?: string; province?: string; state?: string; metadata?: Record<string, unknown> }
 type Container = MedusaContainer
-
-function asPaise(value: unknown): number {
-  const number = Number(value)
-  if (!Number.isSafeInteger(number) || number < 0) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Order total is not an integer amount")
-  return number
-}
 
 async function ensureOrderArtifacts(container: Container, input: { orderId: string; cartId: string; providerTransactionId: string; paymentId?: string }) {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
@@ -41,14 +36,14 @@ async function ensureOrderArtifacts(container: Container, input: { orderId: stri
   await orderService.updateOrders([{ id: order.id, metadata: { ...(order.metadata ?? {}), garmops_terms_acceptance: { id: acceptance.id, cartId: input.cartId, cartRevisionHash, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, termsContentHash: acceptance.terms_content_hash ?? CURRENT_TERMS_CONTENT_HASH, privacyContentHash: acceptance.privacy_content_hash ?? CURRENT_PRIVACY_CONTENT_HASH, acceptedAt: acceptance.accepted_at } } }])
 
   const lines = await service.listConfiguredCartLines({ cart_id: input.cartId }, { order: { created_at: "ASC" } })
-  const snapshots = await service.listOrderConfigurationSnapshots({ order_id: order.id })
-  if (snapshots.length === 0 && lines.length > 0) {
-    for (const [index, line] of lines.entries()) {
-      const version = await service.retrieveDesignVersion(line.version_id)
-      await service.createImmutableSnapshot({ orderId: order.id, productSlug: line.product_slug, quantity: line.quantity, sizeBreakdown: line.size_breakdown as Record<string, number>, snapshot: { configuration: version.configuration, deliveryType: line.delivery_type, requestedDeliveryDate, versionRevision: version.revision }, pricingSnapshot: (line.pricing_snapshot ?? {}) as Record<string, unknown>, lineItemId: line.line_item_id ?? undefined, lineNumber: index + 1, customerId: line.customer_id ?? undefined, projectId: line.project_id, versionId: line.version_id })
-    }
+  for (const [index, line] of lines.entries()) {
+    const version = await service.retrieveDesignVersion(line.version_id)
+    await service.createImmutableSnapshot({ orderId: order.id, productSlug: line.product_slug, quantity: line.quantity, sizeBreakdown: line.size_breakdown as Record<string, number>, snapshot: { configuration: version.configuration, deliveryType: line.delivery_type, requestedDeliveryDate, versionRevision: version.revision }, pricingSnapshot: (line.pricing_snapshot ?? {}) as Record<string, unknown>, lineItemId: line.line_item_id ?? undefined, lineNumber: index + 1, customerId: line.customer_id ?? undefined, projectId: line.project_id, versionId: line.version_id })
   }
   const finalSnapshots = await service.listOrderConfigurationSnapshots({ order_id: order.id })
+  const expectedLineIds = lines.map((line, index) => line.line_item_id ?? index + 1)
+  const snapshotLineIds = finalSnapshots.map((snapshot) => snapshot.line_item_id ?? snapshot.line_number)
+  if (expectedLineIds.length !== snapshotLineIds.length || expectedLineIds.some((id, index) => id !== snapshotLineIds[index] && !snapshotLineIds.includes(id))) throw new MedusaError(MedusaError.Types.CONFLICT, "Order configuration snapshots are incomplete; completion remains recoverable")
   await ensureInvoice(container, { order, orderNumber, orderType, snapshots: finalSnapshots, providerTransactionId: input.providerTransactionId, paymentId: input.paymentId })
   await ensureOrderNotification(container, order, orderNumber)
   return { order, orderNumber }
@@ -67,9 +62,9 @@ async function ensureInvoice(container: Container, input: { order: Awaited<Retur
     const hsn = String(item.metadata?.garmops_hsn_code ?? "")
     const rate = Number(item.metadata?.garmops_gst_rate_basis_points)
     if (!hsn || !Number.isSafeInteger(rate)) throw new MedusaError(MedusaError.Types.INVALID_DATA, `Tax configuration is missing for invoice line ${item.id}`)
-    return { description: item.product_title || item.title, hsn, quantity: item.quantity, unitPaise: item.unit_price, discountPaise: Number(item.discount_total ?? 0), taxablePaise: Number(item.subtotal ?? item.unit_price * item.quantity), gstRateBasisPoints: rate }
+    return { description: item.product_title || item.title, hsn, quantity: item.quantity, unitPaise: medusaAmountToPaise(item.unit_price, "Invoice line unit price"), discountPaise: medusaAmountToPaise(item.discount_total ?? 0, "Invoice line discount"), taxablePaise: medusaAmountToPaise(item.subtotal ?? Number(item.unit_price) * item.quantity, "Invoice line subtotal"), gstRateBasisPoints: rate }
   })
-  const totalPaise = asPaise(input.order.total)
+  const totalPaise = medusaAmountToPaise(input.order.total, "Order total")
   const computed = lines.reduce((sum, line) => sum + line.taxablePaise, 0)
   const gst = lines.reduce((total, line) => {
     const lineGst = calculateGstBreakdown({ taxablePaise: line.taxablePaise, sellerState, buyerState, rateBasisPoints: line.gstRateBasisPoints })

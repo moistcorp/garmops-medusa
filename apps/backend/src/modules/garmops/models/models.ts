@@ -37,7 +37,7 @@ export const StaffMember = model.define("staff_member", {
 })
 
 export const PaymentEvent = model.define("payment_event", {
-  id: model.id().primaryKey(), provider: model.text(), provider_event_id: model.text().unique(), provider_transaction_id: model.text().unique(), payment_id: model.text().nullable(), payment_session_id: model.text().nullable(), cart_id: model.text().nullable(), order_id: model.text().nullable(), event_type: model.text(), status: model.text(), amount_paise: model.bigNumber().nullable(), payload_hash: model.text().nullable(), event_payload_hash: model.text(), processed_at: model.dateTime().nullable(), last_error: model.text().nullable(),
+  id: model.id().primaryKey(), provider: model.text(), provider_event_id: model.text().unique(), provider_transaction_id: model.text().unique(), payment_id: model.text().nullable(), payment_session_id: model.text().nullable(), cart_id: model.text().nullable(), order_id: model.text().nullable(), event_type: model.text(), status: model.text(), amount_paise: model.bigNumber().nullable(), payload_hash: model.text().nullable(), event_payload_hash: model.text(), processed_at: model.dateTime().nullable(), last_error: model.text().nullable(), retry_count: model.number().default(0), next_attempt_at: model.dateTime().nullable(),
 })
 
 export const PaymentAttempt = model.define("payment_attempt", {
@@ -45,7 +45,7 @@ export const PaymentAttempt = model.define("payment_attempt", {
 })
 
 export const RefundRequest = model.define("refund_request", {
-  id: model.id().primaryKey(), payment_id: model.text().index(), order_id: model.text().index().nullable(), idempotency_key: model.text().unique(), amount_paise: model.bigNumber(), status: model.enum(["pending", "submitted", "completed", "failed"] as const).default("pending"), requested_by: model.text(), provider_reference: model.text().nullable(), last_error: model.text().nullable(), submitted_at: model.dateTime().nullable(), completed_at: model.dateTime().nullable(),
+  id: model.id().primaryKey(), payment_id: model.text().index(), order_id: model.text().index().nullable(), idempotency_key: model.text().unique(), amount_paise: model.bigNumber(), request_fingerprint: model.text().nullable(), status: model.enum(["pending", "submitted", "completed", "failed"] as const).default("pending"), requested_by: model.text(), provider_reference: model.text().nullable(), last_error: model.text().nullable(), submitted_at: model.dateTime().nullable(), completed_at: model.dateTime().nullable(),
 })
 
 export const CheckoutIdempotency = model.define("checkout_idempotency", {

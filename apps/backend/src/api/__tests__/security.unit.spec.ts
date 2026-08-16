@@ -15,7 +15,7 @@ describe("HTTP security middleware", () => {
   it("denies Operations before any native Medusa admin route runs", async () => {
     const next = jest.fn()
     const json = jest.fn()
-    const req = { auth_context: { actor_id: "user-operations" }, scope: { resolve: () => ({ listStaffMembers: async () => [{ role: "operations", active: true }] }) } }
+    const req = { auth_context: { actor_id: "user-operations", auth_identity_id: "auth-operations" }, scope: { resolve: (key: string) => key === "garmops" ? { listStaffMembers: async () => [{ role: "operations", active: true, auth_user_id: "user-operations" }] } : { retrieveAuthIdentity: async () => ({ provider_identities: [{ entity_id: "user-operations" }] }), listAuthMfa: async () => [{ status: "enabled" }] } } }
     const res = { status: jest.fn(() => ({ json })) }
     await protectNativeAdmin(req as never, res as never, next)
     expect(res.status).toHaveBeenCalledWith(403)
@@ -24,7 +24,7 @@ describe("HTTP security middleware", () => {
 
   it("allows only an active Founder through the native admin boundary", async () => {
     const next = jest.fn()
-    const req = { auth_context: { actor_id: "user-founder" }, scope: { resolve: () => ({ listStaffMembers: async () => [{ role: "founder", active: true }] }) } }
+    const req = { auth_context: { actor_id: "user-founder", auth_identity_id: "auth-founder" }, scope: { resolve: (key: string) => key === "garmops" ? { listStaffMembers: async () => [{ role: "founder", active: true, auth_user_id: "user-founder" }] } : { retrieveAuthIdentity: async () => ({ provider_identities: [{ entity_id: "user-founder" }] }), listAuthMfa: async () => [{ status: "enabled" }] } } }
     await protectNativeAdmin(req as never, {} as never, next)
     expect(next).toHaveBeenCalledTimes(1)
   })

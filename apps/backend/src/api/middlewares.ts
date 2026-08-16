@@ -3,6 +3,7 @@ import type { AuthenticatedMedusaRequest, MedusaNextFunction, MedusaRequest, Med
 import { randomUUID } from "node:crypto"
 import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
+import { currentStaff } from "../auth/staff"
 
 export const removeServerFingerprint = async (_req: MedusaRequest, res: MedusaResponse, next: MedusaNextFunction) => {
   res.removeHeader("X-Powered-By")
@@ -26,7 +27,7 @@ export const protectNativeAdmin = async (req: MedusaRequest, res: MedusaResponse
   const actorId = (req as AuthenticatedMedusaRequest).auth_context?.actor_id
   if (!actorId) return res.status(401).json({ code: "UNAUTHENTICATED", message: "Native administration authentication is required" })
   const service = req.scope.resolve<GarmopsModuleService>(GARMOPS_MODULE)
-  const staff = (await service.listStaffMembers({ auth_user_id: actorId, active: true }))[0]
+  const staff = await currentStaff(req as AuthenticatedMedusaRequest, service)
   if (!staff || staff.role !== "founder") return res.status(403).json({ code: "NATIVE_ADMIN_FORBIDDEN", message: "Native Medusa administration is restricted to Founders" })
   await next()
 }
@@ -37,7 +38,7 @@ export default defineMiddlewares({
     { matcher: "/*", middlewares: [requestId] },
     { matcher: "/admin", middlewares: [authenticate("user", ["session", "bearer"]), protectNativeAdmin] },
     { matcher: "/admin/*", middlewares: [authenticate("user", ["session", "bearer"]), protectNativeAdmin] },
-    { matcher: "/foundry/*", middlewares: [authenticate("user", ["session", "bearer"])] },
+    { matcher: "/foundry/*", middlewares: [authenticate("user", ["session", "bearer"], { allowUnregistered: true })] },
     { matcher: "/store/garmops/cart*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/cart-profile", middlewares: [authenticate("customer", ["session", "bearer"]) ] },
     { matcher: "/store/garmops/cart-lines*", middlewares: [authenticate("customer", ["session", "bearer"]) ] },

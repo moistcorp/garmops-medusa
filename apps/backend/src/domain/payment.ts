@@ -1,4 +1,14 @@
 export type PaymentAttemptDisposition = "complete" | "reconcile" | "reject"
+export type PublicPaymentStatus = "payment_pending" | "payment_succeeded" | "artifact_pending" | "order_complete" | "payment_failed"
+
+export function publicPaymentStatus(input: { eventStatus?: string; eventType?: string; orderId?: string | null }): PublicPaymentStatus {
+  const status = input.eventStatus?.toLowerCase()
+  if (status && ["failure", "failed", "canceled", "cancelled", "invalid", "rejected"].includes(status)) return "payment_failed"
+  if (status === "completed") return "order_complete"
+  if (status === "artifact_pending" || status === "reconciliation_required" || status === "manual_review") return "artifact_pending"
+  if (status === "success" || status === "captured" || status === "authorized" || status === "verified") return "payment_succeeded"
+  return "payment_pending"
+}
 
 export function paymentLockIsActive(expiresAt: Date | string | number, now = Date.now()): boolean {
   const timestamp = expiresAt instanceof Date ? expiresAt.getTime() : typeof expiresAt === "number" ? expiresAt : Date.parse(expiresAt)

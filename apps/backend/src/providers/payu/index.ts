@@ -1,7 +1,7 @@
 import type { AuthorizePaymentInput, AuthorizePaymentOutput, CancelPaymentInput, CancelPaymentOutput, CapturePaymentInput, CapturePaymentOutput, DeletePaymentInput, DeletePaymentOutput, GetPaymentStatusInput, GetPaymentStatusOutput, InitiatePaymentInput, InitiatePaymentOutput, IPaymentProvider, ProviderWebhookPayload, RefundPaymentInput, RefundPaymentOutput, RetrievePaymentInput, RetrievePaymentOutput, UpdatePaymentInput, UpdatePaymentOutput, WebhookActionResult } from "@medusajs/framework/types"
 import { MedusaError, ModuleProvider, Modules } from "@medusajs/framework/utils"
 import { randomUUID } from "node:crypto"
-import { formatPaiseAsRupees, createCommandHash, createPaymentRequestHash } from "./security"
+import { formatMedusaAmountForPayu, createCommandHash, createPaymentRequestHash, type PayuRequestFields } from "./security"
 import { testState } from "../../integrations/test-doubles"
 
 type Options = { key?: string; salt?: string; environment?: "test" | "live"; callbackUrl?: string; browserReturnUrl?: string }
@@ -29,14 +29,16 @@ export class PayuPaymentProvider implements IPaymentProvider {
     const data = input.data ?? {}
     const txnid = String(data.txnid ?? `garmops-${randomUUID()}`)
     const { key, salt, environment } = this.config
-    const amount = formatPaiseAsRupees(Number(input.amount))
+    const amount = formatMedusaAmountForPayu(input.amount)
     const firstname = String(input.context?.customer?.first_name ?? "Customer")
     const email = String(input.context?.customer?.email ?? data.email ?? "")
     const productinfo = String(data.productinfo ?? "Garmops order").slice(0, 200)
     const browserReturnUrl = this.options.browserReturnUrl ?? process.env.PAYU_BROWSER_RETURN_URL ?? (process.env.NODE_ENV === "test" ? this.options.callbackUrl : undefined)
     if (!browserReturnUrl) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU browser return URL is not configured")
-    const fields = { key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), udf5: environment, surl: browserReturnUrl, furl: browserReturnUrl, hash: createPaymentRequestHash({ key, txnid, amount, productinfo, firstname, email, udf1: String(data.cart_id ?? ""), salt }) }
-    return { id: txnid, status: "pending", data: { provider: "payu", environment, checkoutUrl: environment === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment", fields } }
+    const fields: PayuRequestFields = { key, txnid, amount, productinfo, firstname, email, phone: String(data.phone ?? ""), udf1: String(data.cart_id ?? ""), udf2: String(data.udf2 ?? ""), udf3: String(data.udf3 ?? ""), udf4: String(data.udf4 ?? ""), udf5: String(data.udf5 ?? environment), surl: browserReturnUrl, furl: browserReturnUrl }
+    if (!fields.phone) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU requires a customer phone number")
+    const request = { ...fields, hash: createPaymentRequestHash({ ...fields, salt }) }
+    return { id: txnid, status: "pending", data: { provider: "payu", environment, checkoutUrl: environment === "live" ? "https://secure.payu.in/_payment" : "https://test.payu.in/_payment", fields: request } }
   }
   async updatePayment(input: UpdatePaymentInput): Promise<UpdatePaymentOutput> { return { status: "pending", data: { ...(input.data ?? {}), amount: String(input.amount), currency_code: input.currency_code } } }
   async deletePayment(_input: DeletePaymentInput): Promise<DeletePaymentOutput> { return {} }
@@ -51,11 +53,11 @@ export class PayuPaymentProvider implements IPaymentProvider {
     if (!txnid) throw new MedusaError(MedusaError.Types.INVALID_DATA, "PayU refund is missing transaction identity")
     if (process.env.NODE_ENV !== "production" && process.env.GARMOPS_TEST_DOUBLES === "true") {
       testState().paymentCommands.push({ command: "cancel_refund_transaction", txnid, amount: input.amount })
-      return { data: { amount: formatPaiseAsRupees(input.amount), status: "refund_requested", provider_response: { status: "1", test: true } } }
+      return { data: { amount: formatMedusaAmountForPayu(input.amount), status: "refund_requested", provider_response: { status: "1", test: true } } }
     }
-    const result = await this.command("cancel_refund_transaction", txnid, formatPaiseAsRupees(input.amount))
+    const result = await this.command("cancel_refund_transaction", txnid, formatMedusaAmountForPayu(input.amount))
     if (String(result.status) !== "1") throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, "PayU rejected the refund request")
-    return { data: { amount: formatPaiseAsRupees(input.amount), status: "refund_requested", provider_response: result } }
+    return { data: { amount: formatMedusaAmountForPayu(input.amount), status: "refund_requested", provider_response: result } }
   }
   async retrievePayment(input: RetrievePaymentInput): Promise<RetrievePaymentOutput> { return { data: { ...(input.data ?? {}), ...(await this.command("verify_payment", String(input.data?.txnid ?? input.data?.mihpayid ?? ""))) } } }
   async cancelPayment(_input: CancelPaymentInput): Promise<CancelPaymentOutput> { return {} }

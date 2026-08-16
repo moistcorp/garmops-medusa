@@ -4,6 +4,7 @@ import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 import { PUBLIC_STATUS_BY_INTERNAL, type OrderStatus } from "../domain/production"
 import { createSignedDownload } from "../integrations/r2"
+import { medusaAmountToPaise } from "../domain/money"
 
 type Scope = Pick<MedusaContainer, "resolve">
 
@@ -32,7 +33,7 @@ export async function customerOrderView(scope: Scope, order: Awaited<ReturnType<
     date: order.created_at,
     email: order.email,
     items: order.items ?? [],
-    totalPaise: Number(order.total),
+    totalPaise: medusaAmountToPaise(order.total, "Order total"),
     paymentState: job ? "paid" : "pending",
     productionStatus: internal ? PUBLIC_STATUS_BY_INTERNAL[internal] : "payment_pending",
     requestedDeliveryDate: job?.requested_delivery_date ?? null,
@@ -52,4 +53,3 @@ export async function invoiceDownload(scope: Scope, invoiceId: string, customerI
   if (file.order_id !== order.id || file.visibility !== "private" || file.state !== "finalized") throw new MedusaError(MedusaError.Types.NOT_FOUND, "Invoice not found")
   return { invoice, url: await createSignedDownload(file.object_key), expiresIn: 300 }
 }
-
