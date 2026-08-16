@@ -15,10 +15,12 @@ x-backend-environment: &backend-environment
   ADMIN_CORS: ${ADMIN_CORS:-http://localhost:9000}
   AUTH_CORS: ${AUTH_CORS:-http://localhost:3000,http://localhost:3001,http://localhost:9000}
   MEDUSA_BACKEND_URL: ${MEDUSA_PUBLIC_URL:-http://localhost:9000}
-  PAYU_ENV: ${PAYU_ENV:-test}
-  PAYU_KEY: ${PAYU_KEY:-}
+  PAYU_ENV: ${PAYU_ENV:-${PAYU_ENVIRONMENT:-test}}
+  PAYU_KEY: ${PAYU_KEY:-${PAYU_MERCHANT_KEY:-}}
   PAYU_SALT: ${PAYU_SALT:-}
-  PAYU_CALLBACK_URL: ${PAYU_CALLBACK_URL:-http://localhost:9000/garmops/payments/payu/callback}
+  PAYU_CALLBACK_URL: ${PAYU_CALLBACK_URL:-${MEDUSA_PUBLIC_URL:-http://localhost:9000}/garmops/payments/payu/callback}
+  PAYU_BROWSER_RETURN_URL: ${PAYU_BROWSER_RETURN_URL:-${CUSTOMER_APP_URL:-http://localhost:3000}/payment/status}
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
   R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
   R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
   R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}

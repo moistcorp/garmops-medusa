@@ -6,9 +6,11 @@ export const CURRENT_TERMS_CONTENT_HASH = process.env.GARMOPS_CURRENT_TERMS_CONT
 export const CURRENT_PRIVACY_CONTENT_HASH = process.env.GARMOPS_CURRENT_PRIVACY_CONTENT_HASH?.trim() || null
 
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value)
+  if (value === undefined) return "null"
+  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null"
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`
-  return `{${Object.keys(value as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record).filter((key) => record[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`
 }
 
 export function fingerprint(value: unknown): string { return createHash("sha256").update(canonicalJson(value)).digest("hex") }
