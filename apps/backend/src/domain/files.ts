@@ -1,6 +1,15 @@
 import { z } from "@medusajs/framework/zod"
 
 const MiB = 1024 * 1024
+const TRUSTED_SAMPLE_ASSET_URLS = new Set([
+  "https://assets.garmops.com/garments/v1/artwork-sample.svg",
+  "https://assets.garmops.com/garments/v1/neck-label-sample.svg",
+])
+
+export function isTrustedSampleAssetUrl(value: unknown): value is string {
+  return typeof value === "string" && TRUSTED_SAMPLE_ASSET_URLS.has(value)
+}
+
 export const UPLOAD_POLICIES = {
   customer_artwork: { maximumBytes: 20 * MiB, formats: { ai: ["application/postscript", "application/illustrator", "application/vnd.adobe.illustrator", "application/pdf", "application/octet-stream"], pdf: ["application/pdf"], svg: ["image/svg+xml"], png: ["image/png"], jpg: ["image/jpeg"], jpeg: ["image/jpeg"] } },
   approval_pdf: { maximumBytes: 20 * MiB, formats: { pdf: ["application/pdf"] } },

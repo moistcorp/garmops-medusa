@@ -5,6 +5,7 @@ import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
 import { findCatalogProduct, PRINT_TECHNIQUES, REFLECTIVE_COLOURS } from "../domain/catalog"
 import { priceConfiguredLine, samplePrice, validateConfiguredLine, type PricingSnapshot } from "../domain/pricing"
+import { isTrustedSampleAssetUrl } from "../domain/files"
 import { paymentLockIsActive } from "../domain/payment"
 import { canonicalJson, fingerprint } from "../domain/legal"
 import { CURRENT_PRIVACY_CONTENT_HASH, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_CONTENT_HASH, CURRENT_TERMS_VERSION } from "../domain/legal"
@@ -99,12 +100,12 @@ function validateConfigurationShape(configuration: JsonRecord): void {
     const value = artwork[side]
     if (!value) continue
     const sideData = asRecord(value)
-    if (sideData.fileUrl && !sideData.fileId) throw new MedusaError(MedusaError.Types.FORBIDDEN, "Artwork must reference a server-owned file")
+    if (sideData.fileUrl && !sideData.fileId && !isTrustedSampleAssetUrl(sideData.fileUrl)) throw new MedusaError(MedusaError.Types.FORBIDDEN, "Artwork must reference a server-owned file")
     if (sideData.technique && !Object.prototype.hasOwnProperty.call(PRINT_TECHNIQUES, sideData.technique)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Artwork uses an unsupported print technique")
     if (sideData.technique === "reflective_print" && !REFLECTIVE_COLOURS.some((colour) => colour.key === sideData.reflectiveColour)) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Reflective artwork requires an allowed reflective colour")
   }
   const label = asRecord(configuration.neckLabel)
-  if (label.fileUrl && !label.fileId) throw new MedusaError(MedusaError.Types.FORBIDDEN, "Neck label must reference a server-owned file")
+  if (label.fileUrl && !label.fileId && !isTrustedSampleAssetUrl(label.fileUrl)) throw new MedusaError(MedusaError.Types.FORBIDDEN, "Neck label must reference a server-owned file")
   const delivery = configuration.deliveryType
   if (delivery !== undefined && delivery !== "rush" && delivery !== "standard" && delivery !== "flexible") throw new MedusaError(MedusaError.Types.INVALID_DATA, "Delivery preference is invalid")
 }
