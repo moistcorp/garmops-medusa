@@ -39,6 +39,29 @@ function limit(name: string, fallback: number): number {
   return Number.isSafeInteger(value) && value > 0 ? value : fallback
 }
 
+export async function enforceLoginRateLimits(req: MedusaRequest, email: string): Promise<void> {
+  const cache = req.scope.resolve<ICacheService>(Modules.CACHE)
+  const locking = req.scope.resolve<ILockingModule>(Modules.LOCKING)
+  const ip = requestIp(req)
+  const windowSeconds = 10 * 60
+  const keys = [
+    { key: `garmops:login:email:${createHash("sha256").update(email).digest("hex")}`, max: limit("LOGIN_EMAIL_LIMIT", 10) },
+    { key: `garmops:login:ip:${createHash("sha256").update(ip).digest("hex")}`, max: limit("LOGIN_IP_LIMIT", 50) },
+    { key: `garmops:login:pair:${createHash("sha256").update(`${ip}:${email}`).digest("hex")}`, max: limit("LOGIN_IP_EMAIL_LIMIT", 10) },
+    { key: "garmops:login:global", max: limit("LOGIN_GLOBAL_LIMIT", 1000) },
+  ]
+  await locking.execute("login-rate-global", async () => {
+    for (const item of keys) {
+      const current = Number(await cache.get<number>(item.key) ?? 0)
+      if (current >= item.max) throw new MedusaError(MedusaError.Types.NOT_ALLOWED, "Too many sign-in attempts; try again later")
+    }
+    await Promise.all(keys.map(async (item) => {
+      const current = Number(await cache.get<number>(item.key) ?? 0)
+      await cache.set(item.key, current + 1, windowSeconds)
+    }))
+  }, { timeout: 10 })
+}
+
 export async function enforceOtpRateLimits(req: MedusaRequest, email: string): Promise<void> {
   const cache = req.scope.resolve<ICacheService>(Modules.CACHE)
   const locking = req.scope.resolve<ILockingModule>(Modules.LOCKING)
