@@ -2,7 +2,7 @@ import type { AuthenticatedMedusaRequest, MedusaResponse } from "@medusajs/frame
 import type { ILockingModule } from "@medusajs/framework/types"
 import { Modules } from "@medusajs/framework/utils"
 import { createHash } from "node:crypto"
-import { addSampleLine, createCustomerCart, saveCheckout, summarizeCart } from "../../../../services/garmops-cart"
+import { addSampleLine, createCustomerCart, normalizeCustomerPhone, saveCheckout, summarizeCart } from "../../../../services/garmops-cart"
 import { GARMOPS_MODULE } from "../../../../modules/garmops"
 import type GarmopsModuleService from "../../../../modules/garmops/service"
 import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from "../../../../domain/legal"
@@ -34,6 +34,7 @@ export async function POST(req: AuthenticatedMedusaRequest, res: MedusaResponse)
   const key = String(body.idempotencyKey ?? "").trim()
   if (!customerId) return res.status(401).json({ code: "UNAUTHENTICATED", message: "Customer authentication is required", requestId: req.requestId })
   if (!key || key.length > 200 || !body.acceptedTerms || typeof contact.email !== "string" || typeof contact.firstName !== "string" || typeof contact.phone !== "string" || !body.shipping?.address || !Array.isArray(body.items) || body.items.length === 0) return res.status(400).json({ code: "INVALID_SAMPLE_CHECKOUT", message: "Complete sample checkout details and a unique idempotency key are required", requestId: req.requestId })
+  if (!normalizeCustomerPhone(contact.phone)) return res.status(400).json({ code: "INVALID_SAMPLE_PHONE", message: "A valid 10-digit Indian mobile number is required", requestId: req.requestId })
   const items = body.items
   const email = contact.email
   const firstName = contact.firstName
