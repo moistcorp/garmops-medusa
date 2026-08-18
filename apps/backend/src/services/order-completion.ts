@@ -8,12 +8,49 @@ import { renderInvoicePdf, type InvoiceData } from "../domain/invoice"
 import { putPrivateObject } from "../integrations/r2"
 import { randomUUID } from "node:crypto"
 import { injectTestFailure } from "../integrations/test-failures"
-import { getCartRevisionHash, normalizeRequestedDeliveryDate } from "./garmops-cart"
+import { getCartRevisionHash, normalizeRequestedDeliveryDate, withCartLock } from "./garmops-cart"
 import { CURRENT_PRIVACY_CONTENT_HASH, CURRENT_PRIVACY_VERSION, CURRENT_TERMS_CONTENT_HASH, CURRENT_TERMS_VERSION } from "../domain/legal"
 import { medusaAmountToPaise } from "../domain/money"
 
 type AddressLike = { first_name?: string; last_name?: string; company?: string; address_1?: string; address_2?: string; city?: string; postal_code?: string; province?: string; state?: string; metadata?: Record<string, unknown> }
 type Container = MedusaContainer
+
+export type CartRevisionMismatchDiagnostics = {
+  cartId: string
+  paymentAttemptId: string
+  providerTransactionId: string
+  expectedRevision: string
+  actualRevision: string
+}
+
+/**
+ * Thrown when a captured payment no longer matches the current cart revision.
+ * The cart must not be converted into an order; the transaction stays
+ * identifiable for reconciliation/manual handling.
+ */
+export class CartRevisionMismatchError extends Error {
+  readonly diagnostics: CartRevisionMismatchDiagnostics
+  constructor(diagnostics: CartRevisionMismatchDiagnostics) {
+    super(`Cart revision changed after payment: ${JSON.stringify(diagnostics)}`)
+    this.name = "CartRevisionMismatchError"
+    this.diagnostics = diagnostics
+  }
+}
+
+/**
+ * Verifies that the current cart is revision-identical to the cart state that
+ * was paid for. Must be called while holding the canonical cart lock.
+ */
+export async function assertCartRevisionMatchesPayment(container: Container, input: { cartId: string; providerTransactionId: string }) {
+  const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
+  const attempt = (await service.listPaymentAttempts({ provider_transaction_id: input.providerTransactionId }))[0]
+  if (!attempt) throw new MedusaError(MedusaError.Types.CONFLICT, "Payment attempt is missing for this transaction")
+  const currentCartRevisionHash = await getCartRevisionHash(container, input.cartId)
+  if (currentCartRevisionHash !== attempt.cart_revision_hash) {
+    throw new CartRevisionMismatchError({ cartId: input.cartId, paymentAttemptId: attempt.id, providerTransactionId: input.providerTransactionId, expectedRevision: attempt.cart_revision_hash, actualRevision: currentCartRevisionHash })
+  }
+  return attempt
+}
 
 async function ensureOrderArtifacts(container: Container, input: { orderId: string; cartId: string; providerTransactionId: string; paymentId?: string }) {
   const service = container.resolve<GarmopsModuleService>(GARMOPS_MODULE)
@@ -114,7 +151,23 @@ async function ensureOrderNotification(container: Container, order: Awaited<Retu
   }
 }
 
+/**
+ * Completes a verified PayU payment into an order. Acquires the canonical cart
+ * critical section so the current cart revision is verified against the paid
+ * revision before the cart is converted into an order.
+ */
 export async function completeVerifiedPayuPayment(container: Container, input: { cartId: string; providerTransactionId: string; paymentId?: string }) {
+  return withCartLock(container, input.cartId, () => completeVerifiedPayuPaymentLocked(container, input))
+}
+
+/**
+ * Completes a verified PayU payment assuming the canonical cart lock is
+ * already held by the caller (payment callbacks). Verifies the current cart
+ * revision against the revision that was paid for and refuses to fabricate an
+ * order when the cart changed.
+ */
+export async function completeVerifiedPayuPaymentLocked(container: Container, input: { cartId: string; providerTransactionId: string; paymentId?: string }) {
+  await assertCartRevisionMatchesPayment(container, { cartId: input.cartId, providerTransactionId: input.providerTransactionId })
   const locking = container.resolve<ILockingModule>(Modules.LOCKING)
   return locking.execute(`payu:${input.providerTransactionId}`, async () => {
     const { result } = await completePayuOrderWorkflow(container).run({ input: { cartId: input.cartId } })

@@ -1,4 +1,4 @@
-import type { ICartModuleService, MedusaContainer } from "@medusajs/framework/types"
+import type { ICartModuleService, ILockingModule, MedusaContainer } from "@medusajs/framework/types"
 import { Modules, MedusaError } from "@medusajs/framework/utils"
 import { randomUUID } from "node:crypto"
 import { GARMOPS_MODULE } from "../modules/garmops"
@@ -45,6 +45,22 @@ function number(value: unknown, field: string): number {
   const result = Number(value)
   if (!Number.isSafeInteger(result)) throw new MedusaError(MedusaError.Types.INVALID_DATA, `${field} must be an integer amount`)
   return result
+}
+
+/** The single canonical lock key protecting every cart-critical operation. */
+export function cartLockKey(cartId: string): string {
+  return `cart:${cartId}`
+}
+
+/**
+ * The canonical cart critical section. Payment initiation, cart mutations, and
+ * order completion must all run through this same lock key so that pricing and
+ * revision capture cannot race against a concurrent cart change.
+ */
+export async function withCartLock<T>(scope: Scope, cartId: string, job: () => Promise<T>): Promise<T> {
+  if (!cartId) throw new MedusaError(MedusaError.Types.INVALID_DATA, "Cart is required")
+  const locking = scope.resolve<ILockingModule>(Modules.LOCKING)
+  return locking.execute(cartLockKey(cartId), job, { timeout: 30 })
 }
 
 export function validateIndiaAddress(input: unknown, label: string): JsonRecord {
@@ -162,13 +178,11 @@ function nativeLineData(input: { product: { slug: string; name: string; technica
 }
 
 export async function addConfiguredLine(scope: Scope, input: { cartId: string; customerId: string; projectId: string; versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
-  const { cart, profile } = await ownedCart(scope, input.cartId, input.customerId, "configured")
-  await assertCartMutable(scope, cart)
-  const validated = await validateConfiguredInput(scope, input)
-  const locking = scope.resolve<import("@medusajs/framework/types").ILockingModule>(Modules.LOCKING)
-  return locking.execute(`cart-mutation:${cart.id}`, async () => {
-    const current = (await ownedCart(scope, input.cartId, input.customerId, "configured")).cart
+  const { cart } = await ownedCart(scope, input.cartId, input.customerId, "configured")
+  return withCartLock(scope, cart.id, async () => {
+    const { cart: current, profile } = await ownedCart(scope, input.cartId, input.customerId, "configured")
     await assertCartMutable(scope, current)
+    const validated = await validateConfiguredInput(scope, input)
     const item = (await cartService(scope).addLineItems({ cart_id: current.id, ...nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }) }))[0]
     try {
       const line = await service(scope).createConfiguredCartLines({ cart_id: current.id, line_item_id: item.id, customer_id: input.customerId, project_id: validated.project.id, version_id: validated.version.id, product_slug: validated.product.slug, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
@@ -177,22 +191,23 @@ export async function addConfiguredLine(scope: Scope, input: { cartId: string; c
       try { await cartService(scope).deleteLineItems(item.id) } catch (compensationError) { throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, `Configured cart mutation failed and native line compensation failed: ${compensationError instanceof Error ? compensationError.message : "unknown error"}`) }
       throw error
     }
-  }, { timeout: 30 })
+  })
 }
 
 export async function updateConfiguredLine(scope: Scope, input: { lineId: string; customerId: string; versionId?: string; quantity?: number; sizes?: Record<string, number>; sizeBreakdown?: Record<string, number>; deliveryType?: string; configuration?: JsonRecord }) {
   const line = await service(scope).retrieveConfiguredCartLine(input.lineId)
   const { cart } = await ownedCart(scope, line.cart_id, input.customerId, "configured")
-  await assertCartMutable(scope, cart)
-  const validated = await validateConfiguredInput(scope, { customerId: input.customerId, projectId: line.project_id, versionId: input.versionId ?? line.version_id, quantity: input.quantity, sizes: input.sizes, sizeBreakdown: input.sizeBreakdown, deliveryType: input.deliveryType, configuration: input.configuration })
-  if (!line.line_item_id) throw new MedusaError(MedusaError.Types.CONFLICT, "Configured line is missing its native cart line")
-  const locking = scope.resolve<import("@medusajs/framework/types").ILockingModule>(Modules.LOCKING)
-  return locking.execute(`cart-mutation:${cart.id}`, async () => {
-    const native = await cartService(scope).retrieveLineItem(line.line_item_id as string)
-    await cartService(scope).updateLineItems(line.line_item_id as string, nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }))
+  return withCartLock(scope, cart.id, async () => {
+    const currentLine = await service(scope).retrieveConfiguredCartLine(input.lineId)
+    const { cart: current } = await ownedCart(scope, currentLine.cart_id, input.customerId, "configured")
+    await assertCartMutable(scope, current)
+    if (!currentLine.line_item_id) throw new MedusaError(MedusaError.Types.CONFLICT, "Configured line is missing its native cart line")
+    const validated = await validateConfiguredInput(scope, { customerId: input.customerId, projectId: currentLine.project_id, versionId: input.versionId ?? currentLine.version_id, quantity: input.quantity, sizes: input.sizes, sizeBreakdown: input.sizeBreakdown, deliveryType: input.deliveryType, configuration: input.configuration })
+    const native = await cartService(scope).retrieveLineItem(currentLine.line_item_id as string)
+    await cartService(scope).updateLineItems(currentLine.line_item_id as string, nativeLineData({ ...validated, projectId: validated.project.id, versionId: validated.version.id }))
     try {
-      const updated = await service(scope).updateConfiguredCartLines({ id: line.id, version_id: validated.version.id, product_slug: validated.product.slug, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
-      return { cart, line: updated, pricing: validated.pricing }
+      const updated = await service(scope).updateConfiguredCartLines({ id: currentLine.id, version_id: validated.version.id, product_slug: validated.product.slug, quantity: validated.quantity, size_breakdown: validated.sizes, delivery_type: validated.deliveryType, validated: true, pricing_snapshot: validated.pricing })
+      return { cart: current, line: updated, pricing: validated.pricing }
     } catch (error) {
       try {
         await cartService(scope).updateLineItems(native.id, { quantity: native.quantity, unit_price: native.unit_price, is_custom_price: native.is_custom_price, is_tax_inclusive: native.is_tax_inclusive, metadata: native.metadata })
@@ -201,69 +216,81 @@ export async function updateConfiguredLine(scope: Scope, input: { lineId: string
       }
       throw error
     }
-  }, { timeout: 30 })
+  })
 }
 
 export async function removeConfiguredLine(scope: Scope, lineId: string, customerId: string) {
   const line = await service(scope).retrieveConfiguredCartLine(lineId)
   const { cart } = await ownedCart(scope, line.cart_id, customerId, "configured")
-  await assertCartMutable(scope, cart)
-  if (line.line_item_id) {
-    const locking = scope.resolve<import("@medusajs/framework/types").ILockingModule>(Modules.LOCKING)
-    await locking.execute(`cart-mutation:${cart.id}`, async () => {
-      const native = await cartService(scope).retrieveLineItem(line.line_item_id as string)
-      await cartService(scope).deleteLineItems(line.line_item_id as string)
+  return withCartLock(scope, cart.id, async () => {
+    const currentLine = await service(scope).retrieveConfiguredCartLine(lineId)
+    const { cart: current } = await ownedCart(scope, currentLine.cart_id, customerId, "configured")
+    await assertCartMutable(scope, current)
+    if (currentLine.line_item_id) {
+      const native = await cartService(scope).retrieveLineItem(currentLine.line_item_id as string)
+      await cartService(scope).deleteLineItems(currentLine.line_item_id as string)
       try {
-        await service(scope).deleteConfiguredCartLines(line.id)
+        await service(scope).deleteConfiguredCartLines(currentLine.id)
       } catch (error) {
         try {
-          const restored = (await cartService(scope).addLineItems({ cart_id: cart.id, title: native.title, product_title: native.product_title, quantity: native.quantity, requires_shipping: native.requires_shipping, unit_price: native.unit_price, is_custom_price: native.is_custom_price, is_tax_inclusive: native.is_tax_inclusive, metadata: native.metadata }))[0]
-          await service(scope).updateConfiguredCartLines({ id: line.id, line_item_id: restored.id })
+          const restored = (await cartService(scope).addLineItems({ cart_id: current.id, title: native.title, product_title: native.product_title, quantity: native.quantity, requires_shipping: native.requires_shipping, unit_price: native.unit_price, is_custom_price: native.is_custom_price, is_tax_inclusive: native.is_tax_inclusive, metadata: native.metadata }))[0]
+          await service(scope).updateConfiguredCartLines({ id: currentLine.id, line_item_id: restored.id })
         } catch (compensationError) {
           throw new MedusaError(MedusaError.Types.UNEXPECTED_STATE, `Configured cart deletion failed and native line compensation failed: ${compensationError instanceof Error ? compensationError.message : "unknown error"}`)
         }
         throw error
       }
-    }, { timeout: 30 })
-  } else await service(scope).deleteConfiguredCartLines(line.id)
+    } else await service(scope).deleteConfiguredCartLines(currentLine.id)
+  })
 }
 
 export async function addSampleLine(scope: Scope, input: { cartId: string; customerId: string; productSlug: string; size: string; quantity: number }) {
-  const { cart, profile } = await ownedCart(scope, input.cartId, input.customerId, "sample")
-  await assertCartMutable(scope, cart)
-  const pricing = samplePrice(input.productSlug, input.size, input.quantity)
-  const product = findCatalogProduct(input.productSlug)
-  if (!product) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
-  const existing = (cart.items ?? []).find((item) => item.metadata?.garmops_sample_product_slug === input.productSlug && item.metadata?.garmops_sample_size === input.size)
-  if (!existing && (cart.items ?? []).filter((item) => item.metadata?.garmops_sample === true).length >= 50) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample cart can contain at most 50 lines")
-  const existingQuantity = existing ? number(existing.quantity, "quantity") : 0
-  if (existingQuantity + input.quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample size can contain at most 100 units")
-  let item
-  if (existing) item = await cartService(scope).updateLineItems(existing.id, { quantity: existingQuantity + input.quantity, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, metadata: { ...(existing.metadata ?? {}), garmops_sample_pricing_snapshot: pricing } })
-  else item = (await cartService(scope).addLineItems({ cart_id: cart.id, title: `${product.name} sample`, product_title: product.technicalName, quantity: input.quantity, requires_shipping: false, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, tax_lines: [{ code: "GST", rate: pricing.gstRateBasisPoints / 100, description: "Goods and Services Tax" }], metadata: { garmops_sample: true, garmops_sample_product_slug: input.productSlug, garmops_sample_size: input.size, garmops_sample_pricing_snapshot: pricing, garmops_hsn_code: product.hsnCode, garmops_gst_rate_basis_points: pricing.gstRateBasisPoints } }))[0]
-  return { cart, profile, item, pricing }
+  const { cart } = await ownedCart(scope, input.cartId, input.customerId, "sample")
+  return withCartLock(scope, cart.id, async () => {
+    const { cart: current, profile } = await ownedCart(scope, input.cartId, input.customerId, "sample")
+    await assertCartMutable(scope, current)
+    const pricing = samplePrice(input.productSlug, input.size, input.quantity)
+    const product = findCatalogProduct(input.productSlug)
+    if (!product) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Product is no longer available")
+    const existing = (current.items ?? []).find((item) => item.metadata?.garmops_sample_product_slug === input.productSlug && item.metadata?.garmops_sample_size === input.size)
+    if (!existing && (current.items ?? []).filter((item) => item.metadata?.garmops_sample === true).length >= 50) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample cart can contain at most 50 lines")
+    const existingQuantity = existing ? number(existing.quantity, "quantity") : 0
+    if (existingQuantity + input.quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample size can contain at most 100 units")
+    let item
+    if (existing) item = await cartService(scope).updateLineItems(existing.id, { quantity: existingQuantity + input.quantity, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, metadata: { ...(existing.metadata ?? {}), garmops_sample_pricing_snapshot: pricing } })
+    else item = (await cartService(scope).addLineItems({ cart_id: current.id, title: `${product.name} sample`, product_title: product.technicalName, quantity: input.quantity, requires_shipping: false, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, tax_lines: [{ code: "GST", rate: pricing.gstRateBasisPoints / 100, description: "Goods and Services Tax" }], metadata: { garmops_sample: true, garmops_sample_product_slug: input.productSlug, garmops_sample_size: input.size, garmops_sample_pricing_snapshot: pricing, garmops_hsn_code: product.hsnCode, garmops_gst_rate_basis_points: pricing.gstRateBasisPoints } }))[0]
+    return { cart: current, profile, item, pricing }
+  })
 }
 
 export async function updateSampleLine(scope: Scope, input: { lineId: string; customerId: string; productSlug?: string; size?: string; quantity?: number }) {
   const item = await cartService(scope).retrieveLineItem(input.lineId)
   const { cart } = await ownedCart(scope, String(item.cart_id), input.customerId, "sample")
-  await assertCartMutable(scope, cart)
-  const metadata = asRecord(item.metadata)
-  if (metadata.garmops_sample !== true) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Sample line not found")
-  const productSlug = input.productSlug ?? String(metadata.garmops_sample_product_slug ?? "")
-  const size = input.size ?? String(metadata.garmops_sample_size ?? "")
-  const quantity = input.quantity ?? number(item.quantity, "quantity")
-  const pricing = samplePrice(productSlug, size, quantity)
-  if (quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample size can contain at most 100 units")
-  const updated = await cartService(scope).updateLineItems(item.id, { quantity, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, metadata: { ...metadata, garmops_sample_product_slug: productSlug, garmops_sample_size: size, garmops_sample_pricing_snapshot: pricing } })
-  return { cart, item: updated, pricing }
+  return withCartLock(scope, cart.id, async () => {
+    const currentItem = await cartService(scope).retrieveLineItem(input.lineId)
+    const { cart: current } = await ownedCart(scope, String(currentItem.cart_id), input.customerId, "sample")
+    await assertCartMutable(scope, current)
+    const metadata = asRecord(currentItem.metadata)
+    if (metadata.garmops_sample !== true) throw new MedusaError(MedusaError.Types.NOT_FOUND, "Sample line not found")
+    const productSlug = input.productSlug ?? String(metadata.garmops_sample_product_slug ?? "")
+    const size = input.size ?? String(metadata.garmops_sample_size ?? "")
+    const quantity = input.quantity ?? number(currentItem.quantity, "quantity")
+    const pricing = samplePrice(productSlug, size, quantity)
+    if (quantity > 100) throw new MedusaError(MedusaError.Types.INVALID_DATA, "A sample size can contain at most 100 units")
+    const updated = await cartService(scope).updateLineItems(currentItem.id, { quantity, unit_price: paiseToMedusaAmount(pricing.unitPricePaise, "Sample line unit price"), is_custom_price: true, is_tax_inclusive: false, metadata: { ...metadata, garmops_sample_product_slug: productSlug, garmops_sample_size: size, garmops_sample_pricing_snapshot: pricing } })
+    return { cart: current, item: updated, pricing }
+  })
 }
 
 export async function removeSampleLine(scope: Scope, lineId: string, customerId: string) {
   const item = await cartService(scope).retrieveLineItem(lineId)
   const { cart } = await ownedCart(scope, String(item.cart_id), customerId, "sample")
-  await assertCartMutable(scope, cart)
-  await cartService(scope).deleteLineItems(lineId)
+  return withCartLock(scope, cart.id, async () => {
+    const currentItem = await cartService(scope).retrieveLineItem(lineId)
+    const { cart: current } = await ownedCart(scope, String(currentItem.cart_id), customerId, "sample")
+    await assertCartMutable(scope, current)
+    await cartService(scope).deleteLineItems(lineId)
+  })
 }
 
 export async function summarizeCart(scope: Scope, cartId: string, customerId: string): Promise<CartSummary> {
@@ -361,17 +388,20 @@ export async function assertCheckoutReadyForPayment(scope: Scope, cartId: string
 
 export async function saveCheckout(scope: Scope, input: { cartId: string; customerId: string; email: string; projectName?: string; orderNotes?: string; gstin?: string; billingEntity?: string; shippingAddress: unknown; billingAddress?: unknown; termsVersion: string; privacyVersion?: string; requestedDeliveryDate?: string; deliveryPreference?: string; requestId?: string }) {
   const { cart } = await ownedCart(scope, input.cartId, input.customerId)
-  await assertCartMutable(scope, cart)
-  if (input.termsVersion !== CURRENT_TERMS_VERSION || input.privacyVersion !== CURRENT_PRIVACY_VERSION) throw new MedusaError(MedusaError.Types.CONFLICT, "Please accept the current Terms and Privacy Policy")
-  const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
-  const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
-  if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
-  const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
-  const metadata = { ...(cart.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, acceptedAt: new Date().toISOString() } }
-  const updated = await cartService(scope).updateCarts(cart.id, { email: input.email.trim().toLowerCase(), shipping_address: shipping, billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } }, metadata })
-  const cartRevisionHash = await getCartRevisionHash(scope, input.cartId)
-  await service(scope).createTermsAcceptances({ customer_id: input.customerId, cart_id: input.cartId, cart_revision_hash: cartRevisionHash, order_id: null, terms_version: CURRENT_TERMS_VERSION, privacy_version: CURRENT_PRIVACY_VERSION, terms_content_hash: CURRENT_TERMS_CONTENT_HASH, privacy_content_hash: CURRENT_PRIVACY_CONTENT_HASH, accepted_at: new Date(), request_id: input.requestId ?? null })
-  return updated
+  return withCartLock(scope, cart.id, async () => {
+    const { cart: current } = await ownedCart(scope, input.cartId, input.customerId)
+    await assertCartMutable(scope, current)
+    if (input.termsVersion !== CURRENT_TERMS_VERSION || input.privacyVersion !== CURRENT_PRIVACY_VERSION) throw new MedusaError(MedusaError.Types.CONFLICT, "Please accept the current Terms and Privacy Policy")
+    const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
+    const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
+    if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
+    const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
+    const metadata = { ...(current.metadata ?? {}), garmops_checkout: { projectName: input.projectName?.trim(), orderNotes: input.orderNotes?.trim(), gstin: input.gstin?.toUpperCase(), billingEntity: input.billingEntity?.trim(), deliveryPreference: input.deliveryPreference, requestedDeliveryDate, termsVersion: CURRENT_TERMS_VERSION, privacyVersion: CURRENT_PRIVACY_VERSION, acceptedAt: new Date().toISOString() } }
+    const updated = await cartService(scope).updateCarts(current.id, { email: input.email.trim().toLowerCase(), shipping_address: shipping, billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } }, metadata })
+    const cartRevisionHash = await getCartRevisionHash(scope, input.cartId)
+    await service(scope).createTermsAcceptances({ customer_id: input.customerId, cart_id: input.cartId, cart_revision_hash: cartRevisionHash, order_id: null, terms_version: CURRENT_TERMS_VERSION, privacy_version: CURRENT_PRIVACY_VERSION, terms_content_hash: CURRENT_TERMS_CONTENT_HASH, privacy_content_hash: CURRENT_PRIVACY_CONTENT_HASH, accepted_at: new Date(), request_id: input.requestId ?? null })
+    return updated
+  })
 }
 
 export function normalizeRequestedDeliveryDate(value: unknown): string | undefined {
@@ -385,27 +415,30 @@ export function normalizeRequestedDeliveryDate(value: unknown): string | undefin
 
 export async function saveCheckoutDetails(scope: Scope, input: { cartId: string; customerId: string; email: string; shippingAddress: unknown; billingAddress?: unknown; gstin?: string; billingEntity?: string; requestedDeliveryDate?: string; deliveryPreference?: string }) {
   const { cart } = await ownedCart(scope, input.cartId, input.customerId)
-  await assertCartMutable(scope, cart)
-  const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
-  const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
-  if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
-  const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
-  const previous = asRecord(cart.metadata?.garmops_checkout)
-  const metadata = {
-    ...(cart.metadata ?? {}),
-    garmops_checkout: {
-      ...previous,
-      gstin: input.gstin?.toUpperCase(),
-      billingEntity: input.billingEntity?.trim(),
-      deliveryPreference: input.deliveryPreference,
-      requestedDeliveryDate,
-    },
-  }
-  return cartService(scope).updateCarts(cart.id, {
-    email: input.email.trim().toLowerCase(),
-    shipping_address: shipping,
-    billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } },
-    metadata,
+  return withCartLock(scope, cart.id, async () => {
+    const { cart: current } = await ownedCart(scope, input.cartId, input.customerId)
+    await assertCartMutable(scope, current)
+    const shipping = validateIndiaAddress(input.shippingAddress, "Shipping address")
+    const billing = validateIndiaAddress(input.billingAddress ?? input.shippingAddress, "Billing address")
+    if (input.gstin && !/^[0-9A-Z]{15}$/.test(input.gstin.toUpperCase())) throw new MedusaError(MedusaError.Types.INVALID_DATA, "GSTIN is invalid")
+    const requestedDeliveryDate = validateDeliveryDate({ deliveryType: input.deliveryPreference, requestedDeliveryDate: normalizeRequestedDeliveryDate(input.requestedDeliveryDate), extraLeadTimeDays: await checkoutExtraLeadTime(scope, input.cartId) })
+    const previous = asRecord(current.metadata?.garmops_checkout)
+    const metadata = {
+      ...(current.metadata ?? {}),
+      garmops_checkout: {
+        ...previous,
+        gstin: input.gstin?.toUpperCase(),
+        billingEntity: input.billingEntity?.trim(),
+        deliveryPreference: input.deliveryPreference,
+        requestedDeliveryDate,
+      },
+    }
+    return cartService(scope).updateCarts(current.id, {
+      email: input.email.trim().toLowerCase(),
+      shipping_address: shipping,
+      billing_address: { ...billing, company: input.billingEntity?.trim(), metadata: { ...(billing.metadata as JsonRecord ?? {}), gstin: input.gstin?.toUpperCase() } },
+      metadata,
+    })
   })
 }
 

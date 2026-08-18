@@ -301,6 +301,117 @@ medusaIntegrationTestRunner({
         expect(orders.data.orders).toHaveLength(1)
       })
 
+      async function configuredCart(headers: Record<string, string>, email: string) {
+        const design = await api.post("/store/garmops/designs", { title: "Revision integrity order", productSlug: "regular-fit-tee-200gsm", quantity: 50, configuration: { colourType: "signature", artwork: {}, neckLabel: { labelType: "standard-size" }, deliveryType: "standard" } }, { headers })
+        expect(design.status).toBe(201)
+        const cart = await api.post("/store/garmops/cart", { cartType: "configured", email }, { headers })
+        expect(cart.status).toBe(201)
+        const cartId = cart.data.cart.cartId
+        const line = await api.post("/store/garmops/cart-lines", { cartId, projectId: design.data.project.id, versionId: design.data.version.id, quantity: 50, sizes: { S: 10, M: 20, L: 20 } }, { headers })
+        expect(line.status).toBe(201)
+        const prepared = await api.post("/store/garmops/checkout/prepare", { cartId, email, termsVersion: "terms-2026-08", privacyVersion: "privacy-2026-08", shippingAddress: { first_name: "Integrity", last_name: "Customer", address_1: "1 Test Street", city: "Bengaluru", province: "Karnataka", postal_code: "560001", country_code: "in", phone: "9999999999" } }, { headers })
+        expect(prepared.status).toBe(200)
+        return { cartId, lineId: line.data.cart.lines[0].id }
+      }
+
+      async function expectNoOrder(headers: Record<string, string>) {
+        const orders = await api.get("/store/garmops/orders", { headers })
+        expect(orders.status).toBe(200)
+        expect(orders.data.orders).toHaveLength(0)
+      }
+
+      it("never completes an order when the cart changed after payment initiation", async () => {
+        const email = `revision-a-${Date.now()}@example.test`
+        const headers = await customer(email)
+        const { cartId, lineId } = await configuredCart(headers, email)
+        const initiated = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        expect(initiated.status).toBe(201)
+        const changed = await api.patch(`/store/garmops/cart-lines/${lineId}`, { quantity: 75, sizes: { S: 25, M: 25, L: 25 } }, { headers })
+        expect(changed.status).toBe(200)
+        const callback = await api.post("/store/garmops/payments/payu/callback", payuResponse(initiated.data.paymentSession, cartId))
+        expect(callback.status).toBe(202)
+        expect(callback.data.code).toBe("PAYU_ATTEMPT_INVALIDATED")
+        await expectNoOrder(headers)
+        const status = await api.get(`/store/garmops/payments/payu/status?cartId=${encodeURIComponent(cartId)}`, { headers })
+        expect(status.data.status).toBe("artifact_pending")
+      })
+
+      it("never completes an order when the quantity changed after payment initiation", async () => {
+        const email = `revision-b-${Date.now()}@example.test`
+        const headers = await customer(email)
+        const { cartId, lineId } = await configuredCart(headers, email)
+        const initiated = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        const changed = await api.patch(`/store/garmops/cart-lines/${lineId}`, { quantity: 100, sizes: { S: 20, M: 40, L: 40 } }, { headers })
+        expect(changed.status).toBe(200)
+        const callback = await api.post("/store/garmops/payments/payu/callback", payuResponse(initiated.data.paymentSession, cartId))
+        expect(callback.status).toBe(202)
+        expect(callback.data.code).toBe("PAYU_ATTEMPT_INVALIDATED")
+        await expectNoOrder(headers)
+      })
+
+      it("never completes an order when a product was removed after payment initiation", async () => {
+        const email = `revision-c-${Date.now()}@example.test`
+        const headers = await customer(email)
+        const { cartId, lineId } = await configuredCart(headers, email)
+        const initiated = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        const removed = await api.delete(`/store/garmops/cart-lines/${lineId}`, { headers })
+        expect(removed.status).toBe(204)
+        const callback = await api.post("/store/garmops/payments/payu/callback", payuResponse(initiated.data.paymentSession, cartId))
+        expect(callback.status).toBe(202)
+        expect(callback.data.code).toBe("PAYU_ATTEMPT_INVALIDATED")
+        await expectNoOrder(headers)
+      })
+
+      it("never completes an order when delivery data changed after payment initiation", async () => {
+        const email = `revision-d-${Date.now()}@example.test`
+        const headers = await customer(email)
+        const { cartId } = await configuredCart(headers, email)
+        const initiated = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        expect(initiated.status).toBe(201)
+        const changed = await api.post("/store/garmops/checkout/prepare", { cartId, email, termsVersion: "terms-2026-08", privacyVersion: "privacy-2026-08", shippingAddress: { first_name: "Integrity", last_name: "Customer", address_1: "2 Moved Street", city: "Mumbai", province: "Maharashtra", postal_code: "400001", country_code: "in", phone: "8888888888" } }, { headers })
+        expect(changed.status).toBe(200)
+        const callback = await api.post("/store/garmops/payments/payu/callback", payuResponse(initiated.data.paymentSession, cartId))
+        expect(callback.status).toBe(202)
+        expect(callback.data.code).toBe("PAYU_ATTEMPT_INVALIDATED")
+        await expectNoOrder(headers)
+      })
+
+      it("rejects a duplicate callback after completion without creating a second order", async () => {
+        const headers = await customer(`duplicate-${Date.now()}@example.test`)
+        const cart = await api.post("/store/garmops/cart", { cartType: "sample" }, { headers })
+        const cartId = cart.data.cart.cartId
+        await api.post("/store/garmops/sample-cart", { cartId, productSlug: "regular-fit-tee-200gsm", size: "M", quantity: 2 }, { headers })
+        const checkout = await api.post("/store/garmops/checkout/prepare", { cartId, email: "duplicate@example.test", termsVersion: "terms-2026-08", shippingAddress: { first_name: "Dup", address_1: "1 Test Street", city: "Bengaluru", province: "Karnataka", postal_code: "560001", country_code: "in" } }, { headers })
+        expect(checkout.status).toBe(200)
+        const initiated = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        const response = payuResponse(initiated.data.paymentSession, cartId)
+        const first = await api.post("/store/garmops/payments/payu/callback", response)
+        expect([200, 202]).toContain(first.status)
+        const duplicate = await api.post("/store/garmops/payments/payu/callback", response)
+        expect(duplicate.status).toBe(200)
+        expect(duplicate.data.duplicate).toBe(true)
+        const orders = await api.get("/store/garmops/orders", { headers })
+        expect(orders.data.orders).toHaveLength(1)
+      })
+
+      it("reconciles instead of completing when the paid attempt was replaced by a new initiation", async () => {
+        const email = `revision-f-${Date.now()}@example.test`
+        const headers = await customer(email)
+        const { cartId } = await configuredCart(headers, email)
+        const first = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        expect(first.status).toBe(201)
+        const second = await api.post("/store/garmops/payments/payu/initiate", { cartId }, { headers })
+        expect(second.status).toBe(201)
+        const oldCallback = await api.post("/store/garmops/payments/payu/callback", payuResponse(first.data.paymentSession, cartId))
+        expect(oldCallback.status).toBe(202)
+        expect(oldCallback.data.code).toBe("PAYU_ATTEMPT_INVALIDATED")
+        await expectNoOrder(headers)
+        const newCallback = await api.post("/store/garmops/payments/payu/callback", payuResponse(second.data.paymentSession, cartId))
+        expect([200, 202]).toContain(newCallback.status)
+        const orders = await api.get("/store/garmops/orders", { headers })
+        expect(orders.data.orders).toHaveLength(1)
+      })
+
       it("executes Founder Foundry access and enforces Operations permissions", async () => {
         const customerHeaders = await customer(`foundry-${Date.now()}@example.test`)
         const paid = await paidCart(customerHeaders, "configured")

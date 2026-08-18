@@ -4,7 +4,8 @@ import { Modules } from "@medusajs/framework/utils"
 import { createHash } from "node:crypto"
 import { GARMOPS_MODULE } from "../modules/garmops"
 import type GarmopsModuleService from "../modules/garmops/service"
-import { completeVerifiedPayuPayment } from "./order-completion"
+import { completeVerifiedPayuPaymentLocked } from "./order-completion"
+import { getCartRevisionHash, withCartLock } from "./garmops-cart"
 import { parseRupeesToPaise, paymentEventFingerprint, verifyPaymentResponseHash, type PayuFields } from "../providers/payu/security"
 import { paymentCallbackDisposition, paymentLockIsActive } from "../domain/payment"
 import { medusaAmountToPaise } from "../domain/money"
@@ -41,35 +42,37 @@ export async function processPayuEvent(req: PayuRequest, source: "callback" | "w
   } catch { /* The payment record can be materialized after the first callback. */ }
   const recorded = await service.recordPaymentEvent({ providerEventId: paymentEventFingerprint(`payu-${source}`, fields), providerTransactionId: transactionId, paymentId: medusaPaymentId ?? String(fields.mihpayid ?? transactionId), paymentSessionId: session.id, cartId, eventType: source, status: String(fields.status), amountPaise, eventPayloadHash: payloadHash })
   if (recorded.event.status === "completed") return { status: 200, body: { accepted: true, verified: true, duplicate: true, orderId: recorded.event.order_id } }
-  const cartAttempt = (cart.metadata?.garmops_payment_attempt ?? {}) as Record<string, unknown>
-  const disposition = paymentCallbackDisposition({ status: String(fields.status), attemptStatus: attempt.status, attemptRevisionHash: attempt.cart_revision_hash, currentCartRevisionHash: cartAttempt.status === "active" ? String(cartAttempt.cartRevisionHash ?? "") : undefined, expiresAt: attempt.expires_at })
-  if (disposition !== "complete") {
-    if (attempt.status === "active" && !paymentLockIsActive(attempt.expires_at)) await service.invalidatePaymentAttempt({ id: attempt.id, reason: "PayU callback arrived after payment lock expiry or cart revision change" })
-    const status = disposition === "reconcile" ? "reconciliation_required" : "failed"
-    await service.markPaymentEvent({ id: recorded.event.id, status, error: status === "reconciliation_required" ? "Payment captured for an invalidated or changed cart revision" : "PayU callback arrived for an invalidated payment attempt" })
-    return { status: status === "reconciliation_required" ? 202 : 409, body: { accepted: true, verified: true, recoverable: status === "reconciliation_required", code: "PAYU_ATTEMPT_INVALIDATED", message: "PayU transaction cannot complete the current cart revision" } }
-  }
   const providerStatus = String(fields.status).toLowerCase()
   if (providerStatus !== "success") {
     await payment.updatePaymentSession({ id: session.id, amount: session.amount, currency_code: session.currency_code, status: ["failure", "failed", "cancelled", "canceled"].includes(providerStatus) ? "canceled" : "error", data: { ...(session.data ?? {}), provider_status: providerStatus, verified: false } })
     await service.markPaymentEvent({ id: recorded.event.id, status: providerStatus })
-    await req.scope.resolve<any>(Modules.CART).updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { ...cartAttempt, status: "failed", resolvedAt: new Date().toISOString() } } })
+    await req.scope.resolve<any>(Modules.CART).updateCarts(cartId, { metadata: { ...(cart.metadata ?? {}), garmops_payment_attempt: { ...(cart.metadata?.garmops_payment_attempt ?? {}), status: "failed", resolvedAt: new Date().toISOString() } } })
     await service.updatePaymentAttempts({ id: attempt.id, status: "failed", last_error: `PayU status: ${providerStatus}` })
     return { status: 200, body: { accepted: true, verified: true, paymentStatus: providerStatus } }
   }
-  await payment.updatePaymentSession({ id: session.id, amount: session.amount, currency_code: session.currency_code, data: { ...(session.data ?? {}), provider_status: "success", verified: true, verified_at: new Date().toISOString(), mihpayid: String(fields.mihpayid ?? transactionId) } })
-  try {
-    const completed = await completeVerifiedPayuPayment(req.scope, { cartId, providerTransactionId: transactionId, paymentId: String(fields.mihpayid ?? transactionId) })
+  return withCartLock(req.scope, cartId, async () => {
+    const currentCartRevisionHash = await getCartRevisionHash(req.scope, cartId)
+    const disposition = paymentCallbackDisposition({ status: "success", attemptStatus: attempt.status, attemptRevisionHash: attempt.cart_revision_hash, currentCartRevisionHash, expiresAt: attempt.expires_at })
+    if (disposition !== "complete") {
+      if (attempt.status === "active" && !paymentLockIsActive(attempt.expires_at)) await service.invalidatePaymentAttempt({ id: attempt.id, reason: "PayU callback arrived after payment lock expiry or cart revision change" })
+      const status = disposition === "reconcile" ? "reconciliation_required" : "failed"
+      await service.markPaymentEvent({ id: recorded.event.id, status, error: status === "reconciliation_required" ? "Payment captured for an invalidated or changed cart revision" : "PayU callback arrived for an invalidated payment attempt" })
+      return { status: status === "reconciliation_required" ? 202 : 409, body: { accepted: true, verified: true, recoverable: status === "reconciliation_required", code: "PAYU_ATTEMPT_INVALIDATED", message: "PayU transaction cannot complete the current cart revision" } }
+    }
+    await payment.updatePaymentSession({ id: session.id, amount: session.amount, currency_code: session.currency_code, data: { ...(session.data ?? {}), provider_status: "success", verified: true, verified_at: new Date().toISOString(), mihpayid: String(fields.mihpayid ?? transactionId) } })
     try {
-      const collection = await (payment as any).retrievePaymentCollection(session.payment_collection_id, { relations: ["payments"] })
-      const materializedPaymentId = collection?.payments?.find((candidate: { provider_id?: string }) => candidate.provider_id === "pp_payu")?.id
-      if (materializedPaymentId && materializedPaymentId !== recorded.event.payment_id) await service.updatePaymentEvents({ id: recorded.event.id, payment_id: materializedPaymentId })
-    } catch { /* The order is complete even if payment-event enrichment is retried later. */ }
-    await service.markPaymentEvent({ id: recorded.event.id, status: "completed", orderId: completed.order.id })
-    await service.updatePaymentAttempts({ id: attempt.id, status: "completed", completed_at: new Date() })
-    return { status: 200, body: { accepted: true, verified: true, duplicate: recorded.duplicate, orderId: completed.order.id, orderNumber: completed.orderNumber } }
-  } catch (error) {
-    await service.schedulePaymentReconciliationRetry({ id: recorded.event.id, error: error instanceof Error ? error.message : "Order completion is pending retry", maxRetries: Number(process.env.PAYU_RECONCILIATION_MAX_RETRIES || 5) })
-    return { status: 202, body: { accepted: true, verified: true, recoverable: true, message: "Payment verified; order completion is queued for retry" } }
-  }
+      const completed = await completeVerifiedPayuPaymentLocked(req.scope, { cartId, providerTransactionId: transactionId, paymentId: String(fields.mihpayid ?? transactionId) })
+      try {
+        const collection = await (payment as any).retrievePaymentCollection(session.payment_collection_id, { relations: ["payments"] })
+        const materializedPaymentId = collection?.payments?.find((candidate: { provider_id?: string }) => candidate.provider_id === "pp_payu")?.id
+        if (materializedPaymentId && materializedPaymentId !== recorded.event.payment_id) await service.updatePaymentEvents({ id: recorded.event.id, payment_id: materializedPaymentId })
+      } catch { /* The order is complete even if payment-event enrichment is retried later. */ }
+      await service.markPaymentEvent({ id: recorded.event.id, status: "completed", orderId: completed.order.id })
+      await service.updatePaymentAttempts({ id: attempt.id, status: "completed", completed_at: new Date() })
+      return { status: 200, body: { accepted: true, verified: true, duplicate: recorded.duplicate, orderId: completed.order.id, orderNumber: completed.orderNumber } }
+    } catch (error) {
+      await service.schedulePaymentReconciliationRetry({ id: recorded.event.id, error: error instanceof Error ? error.message : "Order completion is pending retry", maxRetries: Number(process.env.PAYU_RECONCILIATION_MAX_RETRIES || 5) })
+      return { status: 202, body: { accepted: true, verified: true, recoverable: true, message: "Payment verified; order completion is queued for retry" } }
+    }
+  })
 }
